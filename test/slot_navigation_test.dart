@@ -103,7 +103,12 @@ void main() {
       await tester.tap(find.text('카메라 연결'));
       await tester.pump(const Duration(milliseconds: 300));
       await tester.pump(const Duration(milliseconds: 300));
-      await tester.tap(find.text('X100VI'));
+      await tester.tap(
+        find.descendant(
+          of: find.byType(SimpleDialogOption),
+          matching: find.text('X100VI'),
+        ),
+      );
       await tester.pumpAndSettle();
       await tester.tap(find.text('Original 1'));
       await tester.pumpAndSettle();
