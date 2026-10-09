@@ -1,4 +1,4 @@
-name: Native builds
+name: X-M5 experimental builds
 on:
   push:
     branches: ['**']
@@ -32,6 +32,7 @@ jobs:
           php -l server/admin.php
           php server/tests.php
   build:
+    needs: test
     timeout-minutes: 30
     strategy:
       fail-fast: false
@@ -39,19 +40,19 @@ jobs:
         include:
           - os: windows-latest
             target: windows
-            command: flutter build windows --release
+            command: flutter build windows --release --dart-define=FUJI_DEFAULT_MODEL=X-M5
             artifact: fuji-san-windows.zip
           - os: ubuntu-latest
             target: android
-            command: flutter build apk --debug
+            command: flutter build apk --debug --dart-define=FUJI_DEFAULT_MODEL=X-M5
             artifact: build/app/outputs/flutter-apk/app-debug.apk
           - os: macos-15
             target: macos
-            command: flutter build macos --release
+            command: flutter build macos --release --dart-define=FUJI_DEFAULT_MODEL=X-M5
             artifact: fuji-san-macos.tar.gz
           - os: macos-15
             target: ios
-            command: flutter build ios --release --no-codesign
+            command: flutter build ios --release --no-codesign --dart-define=FUJI_DEFAULT_MODEL=X-M5
             artifact: fuji-san-ios-unsigned.tar.gz
     runs-on: ${{ matrix.os }}
     steps:
@@ -89,5 +90,5 @@ jobs:
           fi
       - uses: actions/upload-artifact@v4
         with:
-          name: fuji-san-${{ matrix.target }}-experimental
+          name: fuji-san-xm5-${{ matrix.target }}-experimental
           path: ${{ matrix.artifact }}
