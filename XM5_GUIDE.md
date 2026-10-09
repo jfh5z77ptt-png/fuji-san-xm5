@@ -14,7 +14,9 @@
 
 **실제 X-M5 USB 프로토콜은 아직 검증하지 않았습니다.** 카메라가 동일한 속성 ID·자료형·C슬롯 선택 방식을 제공하는 경우에 사용할 수 있도록 구현한 실험적 지원입니다. X-M5가 필요한 속성을 제공하지 않거나 속성 설명 요청을 거부하면 전송을 차단합니다. 모델 이름 제한만 제거했다고 호환성이 입증되는 것은 아닙니다.
 
-확인 완료: 실제 수정한 Dart 프로토콜·모델 코드를 모의 USB 전송에 연결하여 오프라인 검사 9개 통과. C슬롯 범위, 스캔·쓰기·복원, 다른 슬롯 보존, 속성 설명 실패 시 쓰기 차단, 읽기 전용 진단, 기존 X100VI 동작을 검사했습니다. 전체 Flutter 분석·위젯 테스트·운영체제 빌드 및 실기 테스트는 이 환경에서 완료하지 못했습니다.
+확인 완료: 실제 수정한 Dart 프로토콜·모델 코드를 모의 USB 전송에 연결하여 오프라인 검사 9개 통과. C슬롯 범위, 스캔·쓰기·복원, 다른 슬롯 보존, 속성 설명 실패 시 쓰기 차단, 읽기 전용 진단, 기존 X100VI 동작을 검사했습니다. GitHub Actions에서 전체 Flutter 분석·테스트, PHP 검사, Windows·macOS·Android·iOS 빌드가 통과했습니다. Windows의 추가 업데이트 도구 검사도 통과했습니다. 실제 X-M5 연결·조회·쓰기·복원은 아직 검증하지 않았습니다.
+
+완료된 빌드: https://github.com/jfh5z77ptt-png/fuji-san-xm5/actions/runs/37961523354
 
 ## 실행 파일 만드는 방법 A: GitHub Actions
 
@@ -36,6 +38,7 @@
    lib/storage.dart
    test/xm5_test.dart
    test/xm5_ui_test.dart
+   test/slot_navigation_test.dart
    tool/offline_protocol_check.py
    ```
 
@@ -47,7 +50,7 @@
 6. Windows는 다운로드한 Artifact ZIP을 풀고 내부 `fuji-san-windows.zip`도 풉니다. **폴더 전체를 유지한 채 `fuji_san.exe`를 실행**합니다.
 7. macOS는 Artifact 안의 `fuji-san-macos.tar.gz`를 풀어 앱을 실행합니다. 미서명 개발 빌드이므로 macOS 실행 허용 또는 로컬 서명이 필요할 수 있습니다. iOS 결과는 바로 설치 가능한 IPA가 아닙니다.
 
-이 압축 파일에는 GitHub 계정 정보나 실행 완료한 Actions 결과가 들어 있지 않습니다. 본인 저장소에 업로드하기 전에는 Actions가 실행되지 않습니다. GitHub 빌드도 아직 직접 검증하지 않았습니다.
+소스 압축 파일에는 GitHub 계정 정보나 실행 파일이 들어 있지 않습니다. 이미 완료된 위 빌드의 Artifacts를 받으면 직접 소스를 업로드하거나 Flutter를 설치할 필요가 없습니다.
 
 ## 실행 파일 만드는 방법 B: 본인 컴퓨터
 
