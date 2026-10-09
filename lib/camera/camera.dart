@@ -1,12 +1,17 @@
 import 'dart:typed_data';
+
 import '../domain/recipe.dart';
 import 'ptp.dart';
 import '../diagnostic_log.dart';
+import 'model.dart';
 
 class CameraIdentity {
   CameraIdentity(this.model, this.firmware, this.serial, this.properties);
   final String model, firmware, serial;
   final Set<int> properties;
+  CameraModel get profile =>
+      CameraModel.fromName(model) ??
+      (throw StateError('지원하지 않는 카메라 모델: $model'));
 }
 
 class Snapshot {
@@ -63,13 +68,17 @@ class FujiCamera implements RecipeCamera {
   FujiCamera(this.transport);
   final CameraTransport transport;
   CameraIdentity? identity;
+  CameraModel get profile => identity?.profile ?? CameraModel.x100vi;
+  Set<int> operations = {};
   bool _knownSchemaOnly = false;
   Future<Uint8List> read(int prop) => transport.command(0x1015, params: [prop]);
   Future<void> set(int prop, Uint8List value) async {
     await transport.command(0x1016, params: [prop], outgoing: value);
   }
 
-  Future<void> inspect() async {
+  Future<void> inspect({bool requireRecipeProperties = true}) async {
+    identity = null;
+    operations = {};
     _knownSchemaOnly = false;
     final r = Reader(await transport.command(0x1001));
     r.read16();
@@ -96,28 +105,81 @@ class FujiCamera implements RecipeCamera {
       'deviceInfo ops=${ops.map((p) => p.toRadixString(16)).join(',')} properties=${props.map((p) => p.toRadixString(16)).join(',')}',
     );
     if (!manufacturer.toUpperCase().contains('FUJI') ||
-        model.toUpperCase() != 'X100VI') {
-      throw StateError('이 버전은 FUJIFILM X100VI 전용입니다. 감지: $manufacturer $model');
+        CameraModel.fromName(model) == null) {
+      throw StateError(
+        '지원 모델은 X100VI / X-M5(실험적)입니다. 감지: $manufacturer $model',
+      );
     }
-    if (!ops.contains(0x1014) ||
-        !ops.contains(0x1015) ||
-        !ops.contains(0x1016) ||
-        !props.contains(0xd18c) ||
-        !props.contains(0xd18d) ||
-        settings.any((s) => !props.contains(s.id))) {
+    operations = ops.toSet();
+    if (requireRecipeProperties &&
+        (!ops.contains(0x1014) ||
+            !ops.contains(0x1015) ||
+            !ops.contains(0x1016) ||
+            !props.contains(0xd18c) ||
+            !props.contains(0xd18d) ||
+            settings.any((s) => !props.contains(s.id)))) {
       throw StateError(
         '카메라가 필요한 레시피 속성을 제공하지 않습니다. USB RAW CONV./BACKUP RESTORE 모드를 확인하세요.',
       );
     }
-    identity = CameraIdentity(model, firmware, serial, props);
+    identity = CameraIdentity(
+      model.trim().toUpperCase(),
+      firmware,
+      serial,
+      props,
+    );
   }
 
   void _ready() {
     if (identity == null) throw StateError('카메라 모델을 먼저 확인하세요.');
   }
 
+  // No SetDevicePropValue or bank selection: suitable for an unknown firmware.
+  Future<Map<String, dynamic>> probeCapabilities() async {
+    _ready();
+    final properties = <String, dynamic>{};
+    for (final id in [0xd18c, 0xd18d, ...settings.map((s) => s.id)]) {
+      if (!identity!.properties.contains(id)) continue;
+      final result = <String, dynamic>{};
+      if (id != 0xd18d && operations.contains(0x1015)) {
+        try {
+          final value = await read(id);
+          result['valueHex'] = _hex(value);
+        } catch (e) {
+          result['readError'] = '$e';
+        }
+      }
+      if (operations.contains(0x1014)) {
+        try {
+          final descriptor = await transport.command(0x1014, params: [id]);
+          result['descriptorHex'] = _hex(descriptor);
+        } catch (e) {
+          result['descriptorError'] = '$e';
+        }
+      }
+      properties[id.toRadixString(16)] = result;
+    }
+    return {
+      'model': identity!.model,
+      'firmware': identity!.firmware,
+      'slotCount': profile.slotCount,
+      'experimental': profile.experimental,
+      'recipeWrites': false,
+      'slotSelectionWrites': false,
+      'operations': operations.map((id) => id.toRadixString(16)).toList()
+        ..sort(),
+      'advertisedProperties':
+          identity!.properties.map((id) => id.toRadixString(16)).toList()
+            ..sort(),
+      'properties': properties,
+    };
+  }
+
   Future<void> select(int slot) async {
-    if (slot < 1 || slot > 7) throw RangeError.range(slot, 1, 7);
+    _ready();
+    profile.validateSlots([slot]);
+    // X-M5 bank selection is unverified: require the camera's own descriptor.
+    if (profile.experimental) await _validateDescriptor(0xd18c, u16(slot));
     await set(0xd18c, u16(slot));
     await Future<void>.delayed(const Duration(milliseconds: 100));
     if (Reader(await read(0xd18c)).read16() != slot) {
@@ -128,6 +190,7 @@ class FujiCamera implements RecipeCamera {
   @override
   Future<List<Snapshot>> backup(Set<int> slots) async {
     _ready();
+    profile.validateSlots(slots);
     final original = await read(0xd18c);
     final result = <Snapshot>[];
     try {
@@ -241,11 +304,16 @@ class FujiCamera implements RecipeCamera {
 
   Future<void> _write(int slot, Map<int, Uint8List> p) async {
     _ready();
+    profile.validateSlots([slot]);
     final original = await read(0xd18c);
     try {
       await select(slot);
+      // Check every value before the first recipe write. A late unsupported
+      // setting must not leave earlier fields partially changed.
       for (final e in p.entries) {
         await _validateDescriptor(e.key, e.value);
+      }
+      for (final e in p.entries) {
         try {
           await set(e.key, e.value);
         } on PtpResponseException catch (error) {
@@ -297,6 +365,12 @@ class FujiCamera implements RecipeCamera {
   // read, so no setting changes, and records the camera's response to each write.
   Future<List<Map<String, dynamic>>> probeWriteBack(Set<int> slots) async {
     _ready();
+    profile.validateSlots(slots);
+    if (profile.experimental) {
+      throw StateError(
+        'X-M5는 원시 쓰기 진단을 지원하지 않습니다. --diagnose-capabilities를 사용하세요.',
+      );
+    }
     final original = await read(0xd18c);
     final result = <Map<String, dynamic>>[];
     try {

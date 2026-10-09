@@ -1,13 +1,15 @@
 import 'dart:convert';
 import 'dart:io';
+
 import 'package:path_provider/path_provider.dart';
+
 import 'domain/recipe.dart';
 import 'camera/camera.dart';
 
 class LibraryStore {
   Future<Directory> get directory async {
     final dir = Directory(
-      '${(await getApplicationSupportDirectory()).path}/fuji-san',
+      '${(await getApplicationSupportDirectory()).path}/fuji-san-xm5',
     );
     await dir.create(recursive: true);
     return dir;

@@ -1,11 +1,14 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+
 import 'camera/camera.dart';
+import 'camera/model.dart';
 import 'camera/ptp.dart';
 import 'domain/recipe.dart';
 import 'storage.dart';
@@ -17,10 +20,14 @@ import 'builtin_recipes.dart';
 import 'film_icon.dart';
 import 'diagnostic_log.dart';
 import 'error_reporting.dart';
+
 import 'package:url_launcher/url_launcher.dart';
 
 Future<void> main(List<String> arguments) async {
   WidgetsFlutterBinding.ensureInitialized();
+  if (arguments.length == 2 && arguments.first == '--diagnose-capabilities') {
+    exit(await diagnoseCamera(arguments[1], capabilities: true));
+  }
   if (arguments.length == 2 && arguments.first == '--diagnose-camera') {
     exit(await diagnoseCamera(arguments[1]));
   }
@@ -113,10 +120,22 @@ class _WorkspaceState extends State<Workspace> {
   List<Recipe> recipes = [];
   Map<int, String> slots = {};
   Map<int, Snapshot> cameraSlots = {};
+  CameraModel preferredModel =
+      CameraModel.fromName(
+        const String.fromEnvironment(
+          'FUJI_DEFAULT_MODEL',
+          defaultValue: 'X100VI',
+        ),
+      ) ??
+      CameraModel.x100vi;
+  CameraModel get activeModel => camera.identity?.profile ?? preferredModel;
+  int get slotCount => activeModel.slotCount;
+  bool get hasVisibleAssignments => slots.keys.any((slot) => slot <= slotCount);
+  String get slotLabel => activeModel.slotLabel;
   DateTime? slotsReadAt;
   AppRelease? update;
   bool checkingUpdate = false;
-  String updateStatus = '시작할 때 자동 확인';
+  String updateStatus = 'X-M5 수정판 · 자동 업데이트 중지';
   Timer? updateTimer;
   bool busy = true, loaded = false;
   String status = '라이브러리를 여는 중', query = '';
@@ -129,13 +148,6 @@ class _WorkspaceState extends State<Workspace> {
   void initState() {
     super.initState();
     _load();
-    if (widget.store == null) {
-      checkUpdates();
-      updateTimer = Timer.periodic(
-        const Duration(hours: 6),
-        (_) => checkUpdates(),
-      );
-    }
   }
 
   @override
@@ -147,20 +159,8 @@ class _WorkspaceState extends State<Workspace> {
   }
 
   Future<void> checkUpdates() async {
-    if (checkingUpdate) return;
-    setState(() => checkingUpdate = true);
-    try {
-      final found = await UpdateService(store).check();
-      if (!mounted) return;
-      setState(() {
-        update = found;
-        updateStatus = found == null ? '최신 버전입니다' : '${found.tag} 업데이트 가능';
-      });
-    } catch (_) {
-      if (mounted) setState(() => updateStatus = '확인 실패 · 눌러서 다시 확인');
-    } finally {
-      if (mounted) setState(() => checkingUpdate = false);
-    }
+    // Upstream releases do not contain this experimental model support.
+    report('X-M5 수정판은 원본 앱으로 자동 업데이트하지 않습니다.');
   }
 
   Future<void> installUpdate() async {
@@ -208,11 +208,11 @@ class _WorkspaceState extends State<Workspace> {
   Future<void> refreshSlots() async {
     cameraSlots = {};
     slotsReadAt = null;
-    report('카메라 C1–C7 레시피를 읽는 중');
-    final snapshots = await camera.backup({1, 2, 3, 4, 5, 6, 7});
+    report('카메라 $slotLabel 레시피를 읽는 중');
+    final snapshots = await camera.backup(camera.profile.slots);
     cameraSlots = {for (final s in snapshots) s.slot: s};
     slotsReadAt = DateTime.now();
-    report('카메라 C1–C7 읽기 완료 · 원래 슬롯 복원됨');
+    report('카메라 $slotLabel 읽기 완료 · 원래 슬롯 복원됨');
   }
 
   Future<void> showCameraSlot(int slot) async {
@@ -269,7 +269,7 @@ class _WorkspaceState extends State<Workspace> {
         }
       }
       loaded = true;
-      status = '카메라를 연결하고 나만의 일곱 가지 색을 준비하세요.';
+      status = '${activeModel.name} · $slotLabel · 카메라를 연결하세요.';
     } catch (e, stack) {
       status = '저장된 파일을 읽지 못했습니다. 원본을 보존했습니다. $e';
       loadFailure = ErrorReport.capture(e, stack, '라이브러리 읽기 실패');
@@ -326,7 +326,7 @@ class _WorkspaceState extends State<Workspace> {
   }
 
   int get pendingCount =>
-      [for (var i = 1; i <= 7; i++) pending(i)].where((p) => p).length;
+      [for (var i = 1; i <= slotCount; i++) pending(i)].where((p) => p).length;
 
   Recipe? assigned(int slot) {
     final id = slots[slot];
@@ -476,13 +476,43 @@ class _WorkspaceState extends State<Workspace> {
       try {
         await transport.open(selected['id'] as String);
         await camera.inspect();
-        report('X100VI 연결됨 · 펌웨어 ${camera.identity!.firmware}');
+        preferredModel = camera.profile;
+        report(
+          '${camera.identity!.model} 연결됨 · 펌웨어 ${camera.identity!.firmware}',
+        );
       } catch (_) {
         await transport.close();
         camera.identity = null;
         rethrow;
       }
       await refreshSlots();
+    });
+  }
+
+  Future<void> diagnoseCapabilities() async {
+    await run(() async {
+      final ownConnection = !transport.opened;
+      try {
+        if (ownConnection) {
+          final devices = await transport.discover();
+          if (devices.length != 1) {
+            throw StateError('진단할 후지필름 카메라 한 대만 연결하세요.');
+          }
+          await transport.open(devices.single['id'] as String);
+        }
+        await camera.inspect(requireRecipeProperties: false);
+        final result = await camera.probeCapabilities();
+        await copyJson(
+          '카메라 호환성 진단 (읽기 전용)',
+          const JsonEncoder.withIndent('  ').convert(result),
+        );
+        report('호환성 진단 완료 · 레시피와 슬롯 선택 변경 없음');
+      } finally {
+        if (ownConnection) {
+          await transport.close();
+          camera.identity = null;
+        }
+      }
     });
   }
 
@@ -612,13 +642,13 @@ class _WorkspaceState extends State<Workspace> {
       false;
   Future<void> apply() async {
     final plan = <int, Recipe>{
-      for (var i = 1; i <= 7; i++)
+      for (var i = 1; i <= slotCount; i++)
         if (pending(i)) i: assigned(i)!,
     };
     if (plan.isEmpty) return;
     if (!await confirm(
       '카메라 슬롯 덮어쓰기',
-      '${plan.entries.map((e) => 'C${e.key} → ${e.value.cameraName}').join('\n')}\n\n선택한 슬롯의 레시피 설정을 백업한 뒤 덮어씁니다. 배치하지 않은 슬롯은 유지합니다. 실기기 전송은 Windows · X100VI 1.32에서 한 번 확인했을 뿐입니다. 실패하면 즉시 멈추며 백업에서 수동 복원할 수 있습니다.',
+      '${plan.entries.map((e) => 'C${e.key} → ${e.value.cameraName}').join('\n')}\n\n선택한 슬롯의 레시피 설정을 백업한 뒤 덮어씁니다. 배치하지 않은 슬롯은 유지합니다. X-M5 전송은 아직 실기 미검증입니다. 먼저 테스트 슬롯 하나로 적용·읽기·복원을 확인하세요. Windows · X100VI 1.32만 원본 개발자가 확인했습니다. 실패하면 즉시 멈추며 백업에서 수동 복원할 수 있습니다.',
     )) {
       return;
     }
@@ -758,7 +788,9 @@ class _WorkspaceState extends State<Workspace> {
             child: FilledButton.tonalIcon(
               onPressed: busy ? null : connect,
               icon: Icon(transport.opened ? Icons.usb : Icons.usb_off),
-              label: Text(transport.opened ? 'X100VI 연결됨' : '카메라 연결'),
+              label: Text(
+                transport.opened ? '${activeModel.name} 연결됨' : '카메라 연결',
+              ),
             ),
           ),
         ],
@@ -803,14 +835,14 @@ class _WorkspaceState extends State<Workspace> {
               onDestinationSelected: busy
                   ? null
                   : (i) => setState(() => page = i),
-              destinations: const [
+              destinations: [
                 NavigationDestination(
                   icon: Icon(Icons.grid_view),
                   label: '레시피',
                 ),
                 NavigationDestination(
                   icon: Icon(Icons.view_week_outlined),
-                  label: 'C1–C7',
+                  label: slotLabel,
                 ),
                 NavigationDestination(icon: Icon(Icons.tune), label: '도구'),
               ],
@@ -831,9 +863,9 @@ class _WorkspaceState extends State<Workspace> {
         ),
       ),
       const SizedBox(height: 12),
-      const Text(
-        'X100VI 레시피 워크스페이스',
-        style: TextStyle(color: green, fontSize: 12),
+      Text(
+        '${activeModel.name} 레시피 워크스페이스',
+        style: const TextStyle(color: green, fontSize: 12),
       ),
       const SizedBox(height: 32),
       ListTile(
@@ -863,10 +895,17 @@ class _WorkspaceState extends State<Workspace> {
             : () => run(() async {
                 await store.backup(
                   camera.identity!,
-                  await camera.backup({1, 2, 3, 4, 5, 6, 7}),
+                  await camera.backup(camera.profile.slots),
                 );
-                report('C1–C7 레시피 백업 완료');
+                report('$slotLabel 레시피 백업 완료');
               }),
+      ),
+      ListTile(
+        contentPadding: EdgeInsets.zero,
+        leading: const Icon(Icons.usb),
+        title: const Text('카메라 호환성 진단'),
+        subtitle: const Text('설정을 변경하지 않고 USB 속성 확인'),
+        onTap: busy ? null : diagnoseCapabilities,
       ),
       const Divider(height: 48),
       ListTile(
@@ -910,7 +949,7 @@ class _WorkspaceState extends State<Workspace> {
       ),
       const SizedBox(height: 24),
       const Text(
-        'v$appRelease · Experimental\nWindows X100VI 1.32 읽기·일괄 쓰기 확인 · 복원 미검증\nFUJIFILM 비공식 오픈소스 앱',
+        'v$appRelease · X-M5 수정판 / 실기 미검증\nWindows X100VI 1.32 읽기·일괄 쓰기 확인 · 복원 미검증\nFUJIFILM 비공식 오픈소스 앱',
         style: TextStyle(fontSize: 11, color: Colors.black54),
       ),
     ],
@@ -1015,10 +1054,10 @@ class _WorkspaceState extends State<Workspace> {
                   ),
                 ),
                 const SizedBox(height: 8),
-                const Text(
-                  '필름 시뮬레이션과 색감을 정하고\nC1–C7에 원하는 조합으로 배치하세요.',
+                Text(
+                  '필름 시뮬레이션과 색감을 정하고\n$slotLabel에 원하는 조합으로 배치하세요.',
                   textAlign: TextAlign.center,
-                  style: TextStyle(color: Colors.black54, height: 1.7),
+                  style: const TextStyle(color: Colors.black54, height: 1.7),
                 ),
               ],
             ),
@@ -1219,9 +1258,33 @@ class _WorkspaceState extends State<Workspace> {
         ),
       ),
       const SizedBox(height: 12),
-      const Text(
-        '나의 일곱 가지 색',
-        style: TextStyle(fontSize: 23, fontWeight: FontWeight.w800),
+      DropdownButtonFormField<String>(
+        key: ValueKey('model-${activeModel.name}'),
+        initialValue: activeModel.name,
+        decoration: const InputDecoration(labelText: '카메라 모델'),
+        items: [
+          for (final model in CameraModel.supported)
+            DropdownMenuItem(
+              value: model.name,
+              child: Text('${model.name}${model.experimental ? ' (실험적)' : ''}'),
+            ),
+        ],
+        onChanged: busy || transport.opened
+            ? null
+            : (name) => setState(() {
+                preferredModel = CameraModel.fromName(name!)!;
+                status = '${preferredModel.name} · ${preferredModel.slotLabel}';
+              }),
+      ),
+      if (activeModel.experimental)
+        const Padding(
+          padding: EdgeInsets.symmetric(vertical: 12),
+          child: Text('X-M5는 실기 미검증입니다. 사진용 C1–C4를 사용하고 필름 시뮬레이션 다이얼을 C에 두세요.'),
+        ),
+      const SizedBox(height: 12),
+      Text(
+        '${activeModel.name} · $slotLabel',
+        style: const TextStyle(fontSize: 23, fontWeight: FontWeight.w800),
       ),
       const SizedBox(height: 8),
       const Text(
@@ -1234,7 +1297,7 @@ class _WorkspaceState extends State<Workspace> {
             ? null
             : () => run(refreshSlots),
         icon: const Icon(Icons.refresh, size: 16),
-        label: const Text('카메라 C1–C7 새로고침'),
+        label: Text('카메라 $slotLabel 새로고침'),
       ),
       Text(
         slotsReadAt == null
@@ -1243,7 +1306,7 @@ class _WorkspaceState extends State<Workspace> {
         style: const TextStyle(fontSize: 11, color: Colors.black54),
       ),
       const SizedBox(height: 12),
-      for (var slot = 1; slot <= 7; slot++)
+      for (var slot = 1; slot <= slotCount; slot++)
         Padding(
           padding: const EdgeInsets.only(bottom: 10),
           child: Material(
@@ -1297,7 +1360,7 @@ class _WorkspaceState extends State<Workspace> {
             : apply,
         icon: const Icon(Icons.sync),
         label: Text(
-          slots.isNotEmpty && pendingCount == 0
+          hasVisibleAssignments && pendingCount == 0
               ? '배치한 레시피가 모두 적용됨'
               : '$pendingCount개 슬롯 일괄 적용',
         ),
