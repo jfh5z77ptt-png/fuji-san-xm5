@@ -6,7 +6,8 @@ class CameraModel {
 
   static const x100vi = CameraModel('X100VI', 7);
   static const xm5 = CameraModel('X-M5', 4, experimental: true);
-  static const supported = [x100vi, xm5];
+  static const xt5 = CameraModel('X-T5', 7, experimental: true);
+  static const supported = [x100vi, xm5, xt5];
 
   static CameraModel? fromName(String name) {
     for (final model in supported) {

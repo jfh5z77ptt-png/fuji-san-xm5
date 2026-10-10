@@ -109,7 +109,7 @@ class FujiCamera implements RecipeCamera {
     if (!manufacturer.toUpperCase().contains('FUJI') ||
         CameraModel.fromName(model) == null) {
       throw StateError(
-        '지원 모델은 X100VI / X-M5(실험적)입니다. 감지: $manufacturer $model',
+        '지원 모델은 X100VI / X-M5(실험적) / X-T5(실험적)입니다. 감지: $manufacturer $model',
       );
     }
     operations = ops.toSet();
@@ -511,7 +511,7 @@ class FujiCamera implements RecipeCamera {
     profile.validateSlots(slots);
     if (profile.experimental) {
       throw StateError(
-        'X-M5는 원시 쓰기 진단을 지원하지 않습니다. --diagnose-capabilities를 사용하세요.',
+        '${profile.name} 실험적 모드는 원시 쓰기 진단을 지원하지 않습니다. --diagnose-capabilities를 사용하세요.',
       );
     }
     final original = await read(0xd18c);

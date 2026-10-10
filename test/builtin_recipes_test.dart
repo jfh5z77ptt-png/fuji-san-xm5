@@ -28,6 +28,8 @@ void main() {
         home: BuiltinCatalog(
           onAdd: (r) async => added.add(r),
           load: () async => bundled.take(40).toList(),
+          showPhotosInitially: false,
+          loadPhotos: (_) async => const [],
         ),
       ),
     );
@@ -53,7 +55,12 @@ void main() {
     addTearDown(tester.view.resetDevicePixelRatio);
     await tester.pumpWidget(
       MaterialApp(
-        home: BuiltinCatalog(onAdd: (_) async {}, load: () async => bundled),
+        home: BuiltinCatalog(
+          onAdd: (_) async {},
+          load: () async => bundled,
+          showPhotosInitially: false,
+          loadPhotos: (_) async => const [],
+        ),
       ),
     );
     await tester.pumpAndSettle();

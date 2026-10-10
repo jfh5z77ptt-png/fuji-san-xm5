@@ -4,6 +4,8 @@ import 'package:flutter/services.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'domain/recipe.dart';
 import 'film_icon.dart';
+import 'recipe_photos.dart';
+import 'recipe_references.dart';
 
 // A published recipe bundled with the app (assets/builtin_recipes.json, built by
 // tool/build_builtin_recipes.py). It only enters the library when the user adds it.
@@ -37,9 +39,19 @@ Future<List<BuiltinRecipe>> loadBuiltinRecipes() async => parseBuiltinRecipes(
 );
 
 class BuiltinCatalog extends StatefulWidget {
-  const BuiltinCatalog({super.key, required this.onAdd, this.load});
+  const BuiltinCatalog({
+    super.key,
+    required this.onAdd,
+    this.load,
+    this.loadPhotos,
+    this.imageBuilder,
+    this.showPhotosInitially = true,
+  });
   final Future<void> Function(Recipe recipe) onAdd;
   final Future<List<BuiltinRecipe>> Function()? load;
+  final Future<List<RecipePhoto>> Function(Uri)? loadPhotos;
+  final ReferenceImageBuilder? imageBuilder;
+  final bool showPhotosInitially;
   @override
   State<BuiltinCatalog> createState() => _BuiltinCatalogState();
 }
@@ -53,6 +65,12 @@ class _BuiltinCatalogState extends State<BuiltinCatalog> {
   final dr = <int>{}, cc = <int>{}, fx = <int>{};
   int sort = 0;
   bool descending = false;
+  late bool photoView = widget.showPhotosInitially;
+  late bool weeklyOnly = widget.showPhotosInitially;
+  final photos = RecipePhotoRepository();
+
+  Future<List<RecipePhoto>> loadPhotos(Uri uri) =>
+      (widget.loadPhotos ?? photos.load)(uri);
 
   void notify(String message) {
     if (!mounted) return;
@@ -78,7 +96,7 @@ class _BuiltinCatalogState extends State<BuiltinCatalog> {
       builder: (ctx) => AlertDialog(
         title: Text(item.recipe.name),
         content: SizedBox(
-          width: 420,
+          width: hasWeeklyPhotos(item.url) ? 640 : 420,
           child: SingleChildScrollView(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -88,6 +106,13 @@ class _BuiltinCatalogState extends State<BuiltinCatalog> {
                   style: const TextStyle(fontSize: 12, color: Colors.black54),
                 ),
                 const SizedBox(height: 12),
+                if (hasWeeklyPhotos(item.url))
+                  RecipePhotoGallery(
+                    article: item.url,
+                    load: loadPhotos,
+                    onRetry: () => photos.retry(item.url),
+                    imageBuilder: widget.imageBuilder,
+                  ),
                 for (final s in settings)
                   if (applicable(s.id, values))
                     Padding(
@@ -104,9 +129,7 @@ class _BuiltinCatalogState extends State<BuiltinCatalog> {
                     ),
                 const SizedBox(height: 12),
                 Text(
-                  item.sensor.startsWith('X-Trans V')
-                      ? '공개된 설정값을 그대로 옮겼습니다. 노출 보정·ISO 권장값과 작례는 원문에서 확인하세요.'
-                      : '${item.sensor} 카메라용으로 공개된 설정값을 그대로 옮겼습니다. X100VI에서는 결과가 다를 수 있습니다. 노출 보정·ISO 권장값과 작례는 원문에서 확인하세요.',
+                  '${item.sensor}용으로 공개된 설정값입니다. 촬영 기종에 따라 결과가 다를 수 있어요. 노출 보정·ISO 권장값과 전체 작례는 원문에서 확인하세요.',
                   style: const TextStyle(fontSize: 12, color: Colors.black54),
                 ),
               ],
@@ -186,7 +209,8 @@ class _BuiltinCatalogState extends State<BuiltinCatalog> {
 
   bool matches(BuiltinRecipe b, {bool tab = true}) {
     final v = b.recipe.values;
-    return (!tab || film == null || group(v[0xd192]!) == film) &&
+    return (!weeklyOnly || hasWeeklyPhotos(b.url)) &&
+        (!tab || film == null || group(v[0xd192]!) == film) &&
         (dr.isEmpty || dr.contains(drKey(v))) &&
         (cc.isEmpty || cc.contains(v[0xd196])) &&
         (fx.isEmpty || fx.contains(v[0xd197])) &&
@@ -255,6 +279,36 @@ class _BuiltinCatalogState extends State<BuiltinCatalog> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          Wrap(
+            spacing: 8,
+            runSpacing: 4,
+            children: [
+              ChoiceChip(
+                avatar: const Icon(Icons.photo_library_outlined, size: 18),
+                label: const Text('작례 사진'),
+                selected: photoView,
+                onSelected: (_) => setState(() {
+                  photoView = true;
+                  weeklyOnly = true;
+                }),
+              ),
+              ChoiceChip(
+                avatar: const Icon(Icons.list, size: 18),
+                label: const Text('설정 목록'),
+                selected: !photoView,
+                onSelected: (_) => setState(() {
+                  photoView = false;
+                  weeklyOnly = false;
+                }),
+              ),
+              FilterChip(
+                label: const Text('Fuji X Weekly만'),
+                selected: weeklyOnly,
+                onSelected: (v) => setState(() => weeklyOnly = v),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
           tags('DR', dr, present(drKey), drLabel),
           tags(
             '컬러 크롬',
@@ -309,7 +363,7 @@ class _BuiltinCatalogState extends State<BuiltinCatalog> {
             ],
           ),
           Text(
-            '$shown개 · 제작자가 공개한 레시피입니다. 눌러서 설정과 원문을 확인하고 라이브러리에 추가하세요. '
+            '$shown개 · ${photoView ? '사진을 눌러 작례와 설정을 보고 선택하세요. 사진은 인터넷으로 원문에서 불러옵니다. ' : '눌러서 설정과 원문을 확인하고 라이브러리에 추가하세요. '}'
             '목록 출처: Fujifilm Film Simulation Recipes Database (Henri-Pierre Chavaz)',
             style: const TextStyle(fontSize: 12, color: Colors.black54),
           ),
@@ -362,7 +416,7 @@ class _BuiltinCatalogState extends State<BuiltinCatalog> {
           ),
           body: Center(
             child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 760),
+              constraints: BoxConstraints(maxWidth: photoView ? 1120 : 760),
               child: Column(
                 children: [
                   Padding(
@@ -377,31 +431,58 @@ class _BuiltinCatalogState extends State<BuiltinCatalog> {
                     ),
                   ),
                   Expanded(
-                    child: ListView.builder(
-                      padding: const EdgeInsets.fromLTRB(12, 0, 12, 24),
-                      itemCount: shown.length + 1,
-                      itemBuilder: (context, i) {
-                        if (i == 0) return controls(all, shown.length);
-                        final item = shown[i - 1];
-                        final done = added.contains(item.recipe.id);
-                        return ListTile(
-                          onTap: () => details(item),
-                          leading: FilmIcon(
-                            item.recipe.values[0xd192]!,
-                            size: 26,
-                          ),
-                          title: Text(item.recipe.name),
-                          subtitle: Text(
-                            '${item.recipe.film} · ${item.creator} · ${item.camera}\n'
-                            '${summary(item.recipe.values)}',
-                            style: const TextStyle(fontSize: 12),
-                          ),
-                          isThreeLine: true,
-                          trailing: IconButton(
-                            tooltip: done ? '한 번 더 추가' : '라이브러리에 추가',
-                            icon: Icon(done ? Icons.check : Icons.add),
-                            onPressed: () => add(item),
-                          ),
+                    child: LayoutBuilder(
+                      builder: (context, constraints) {
+                        final columns = constraints.maxWidth >= 900
+                            ? 3
+                            : constraints.maxWidth >= 540
+                            ? 2
+                            : 1;
+                        final cardWidth =
+                            (constraints.maxWidth - 24 - (columns - 1) * 12) /
+                            columns;
+                        return CustomScrollView(
+                          slivers: [
+                            SliverToBoxAdapter(
+                              child: controls(all, shown.length),
+                            ),
+                            if (shown.isEmpty)
+                              const SliverToBoxAdapter(
+                                child: Padding(
+                                  padding: EdgeInsets.all(24),
+                                  child: Text(
+                                    '조건에 맞는 레시피가 없어요. 검색이나 필터를 바꿔 보세요.',
+                                  ),
+                                ),
+                              ),
+                            SliverPadding(
+                              padding: const EdgeInsets.fromLTRB(12, 0, 12, 24),
+                              sliver: photoView
+                                  ? SliverGrid(
+                                      gridDelegate:
+                                          SliverGridDelegateWithFixedCrossAxisCount(
+                                            crossAxisCount: columns,
+                                            crossAxisSpacing: 12,
+                                            mainAxisSpacing: 12,
+                                            mainAxisExtent:
+                                                cardWidth * 2 / 3 +
+                                                130 *
+                                                    MediaQuery.textScalerOf(
+                                                      context,
+                                                    ).scale(1),
+                                          ),
+                                      delegate: SliverChildBuilderDelegate(
+                                        (context, i) => photoCard(shown[i]),
+                                        childCount: shown.length,
+                                      ),
+                                    )
+                                  : SliverList.builder(
+                                      itemCount: shown.length,
+                                      itemBuilder: (context, i) =>
+                                          recipeRow(shown[i]),
+                                    ),
+                            ),
+                          ],
                         );
                       },
                     ),
@@ -414,4 +495,92 @@ class _BuiltinCatalogState extends State<BuiltinCatalog> {
       );
     },
   );
+
+  Widget recipeRow(BuiltinRecipe item) {
+    final done = added.contains(item.recipe.id);
+    return ListTile(
+      onTap: () => details(item),
+      leading: FilmIcon(item.recipe.values[0xd192]!, size: 26),
+      title: Text(item.recipe.name),
+      subtitle: Text(
+        '${item.recipe.film} · ${item.creator} · ${item.camera}\n${summary(item.recipe.values)}',
+        style: const TextStyle(fontSize: 12),
+      ),
+      isThreeLine: true,
+      trailing: IconButton(
+        tooltip: done ? '한 번 더 추가' : '라이브러리에 추가',
+        icon: Icon(done ? Icons.check : Icons.add),
+        onPressed: () => add(item),
+      ),
+    );
+  }
+
+  Widget photoCard(BuiltinRecipe item) {
+    final done = added.contains(item.recipe.id);
+    return Card(
+      margin: EdgeInsets.zero,
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: () => details(item),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Expanded(
+              child: RecipePhotoThumbnail(
+                article: item.url,
+                load: loadPhotos,
+                imageBuilder: widget.imageBuilder,
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 8, 12, 6),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    item.recipe.name,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontWeight: FontWeight.bold,
+                      fontSize: 16,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    '${item.recipe.film} · ${item.camera}',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontSize: 12),
+                  ),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          hasWeeklyPhotos(item.url)
+                              ? '사진 © Fuji X Weekly'
+                              : item.creator,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            fontSize: 11,
+                            color: Colors.black54,
+                          ),
+                        ),
+                      ),
+                      IconButton(
+                        tooltip: done ? '한 번 더 추가' : '라이브러리에 추가',
+                        icon: Icon(done ? Icons.check : Icons.add),
+                        onPressed: () => add(item),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 }

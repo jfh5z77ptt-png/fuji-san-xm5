@@ -135,7 +135,7 @@ class _WorkspaceState extends State<Workspace> {
   DateTime? slotsReadAt;
   AppRelease? update;
   bool checkingUpdate = false;
-  String updateStatus = 'X-M5 수정판 · 자동 업데이트 중지';
+  String updateStatus = 'X-M5 / X-T5 수정판 · 자동 업데이트 중지';
   Timer? updateTimer;
   bool busy = true, loaded = false;
   String status = '라이브러리를 여는 중', query = '';
@@ -160,7 +160,7 @@ class _WorkspaceState extends State<Workspace> {
 
   Future<void> checkUpdates() async {
     // Upstream releases do not contain this experimental model support.
-    report('X-M5 수정판은 원본 앱으로 자동 업데이트하지 않습니다.');
+    report('X-M5 / X-T5 수정판은 원본 앱으로 자동 업데이트하지 않습니다.');
   }
 
   Future<void> installUpdate() async {
@@ -697,7 +697,7 @@ class _WorkspaceState extends State<Workspace> {
     if (plan.isEmpty) return;
     if (!await confirm(
       '카메라 슬롯 덮어쓰기',
-      '${plan.entries.map((e) => 'C${e.key} → ${e.value.cameraName}').join('\n')}\n\n선택한 슬롯의 레시피 설정을 백업한 뒤 덮어씁니다. 배치하지 않은 슬롯은 유지합니다. X-M5 전송은 아직 실기 미검증입니다. 먼저 테스트 슬롯 하나로 적용·읽기·복원을 확인하세요. Windows · X100VI 1.32만 원본 개발자가 확인했습니다. 실패하면 즉시 멈추며 백업에서 수동 복원할 수 있습니다.',
+      '${plan.entries.map((e) => 'C${e.key} → ${e.value.cameraName}').join('\n')}\n\n선택한 슬롯의 레시피 설정을 백업한 뒤 덮어씁니다. 배치하지 않은 슬롯은 유지합니다. X-M5는 색농도 단일 설정 저장만 사용자가 확인했습니다. X-T5 전송은 실기 미검증입니다. 먼저 테스트 슬롯 하나로 적용·읽기·복원을 확인하세요. 실패하면 즉시 멈추며 백업에서 수동 복원할 수 있습니다.',
     )) {
       return;
     }
@@ -1005,7 +1005,7 @@ class _WorkspaceState extends State<Workspace> {
       ),
       const SizedBox(height: 24),
       const Text(
-        'v$appRelease · X-M5 1.20 USB 슬롯 조회 확인\nX-M5 레시피 전송·복원은 실기 미검증 · 처음에는 한 슬롯만 확인\nFUJIFILM 비공식 오픈소스 앱',
+        'v$appRelease · X-M5 1.20 USB 슬롯 조회·색농도 저장 사용자 확인\nX-T5 실험적 지원 · 전체 레시피 전송·복원은 실기 미검증\nFUJIFILM 비공식 오픈소스 앱',
         style: TextStyle(fontSize: 11, color: Colors.black54),
       ),
     ],
@@ -1333,10 +1333,12 @@ class _WorkspaceState extends State<Workspace> {
               }),
       ),
       if (activeModel.experimental)
-        const Padding(
-          padding: EdgeInsets.symmetric(vertical: 12),
+        Padding(
+          padding: const EdgeInsets.symmetric(vertical: 12),
           child: Text(
-            'X-M5 1.20의 USB 슬롯 조회는 확인했습니다. 실제 C번호와 설정은 카메라에서 대조하세요. 전송·레시피 복원은 실기 미검증입니다. 사진용 C1–C4와 필름 시뮬레이션 다이얼 C를 사용하세요.',
+            activeModel == CameraModel.xt5
+                ? 'X-T5는 실기 연결·전송을 아직 확인하지 않았습니다. 먼저 도구 → 카메라 호환성 진단을 실행하세요. C1–C7을 지원하며 카메라가 설정 범위를 제공할 때만 전송합니다.'
+                : 'X-M5 1.20의 USB 슬롯 조회와 색농도 저장은 사용자가 확인했습니다. 실제 C번호와 설정은 카메라에서 대조하세요. 전체 레시피 전송·복원은 실기 미검증입니다. 사진용 C1–C4와 필름 시뮬레이션 다이얼 C를 사용하세요.',
           ),
         ),
       const SizedBox(height: 12),
@@ -1566,7 +1568,7 @@ class _RecipeEditorState extends State<RecipeEditor> {
                         ),
                 ),
             const Text(
-              '카메라 상태에 따라 사용 가능한 값이 달라질 수 있습니다. 기종별 설정 범위와 카메라 응답을 확인합니다. X100VI 1.32와 X-M5 1.20에서 속성 설명 요청이 거부되면 앱의 설정 범위를 확인하고, 쓰기 후 다시 읽어 검증합니다. X-M5 전송은 실험적 지원입니다.',
+              '카메라 상태에 따라 사용 가능한 값이 달라질 수 있습니다. 기종별 설정 범위와 카메라 응답을 확인합니다. X100VI 1.32와 X-M5 1.20에서 속성 설명 요청이 거부되면 앱의 설정 범위를 확인하고, 쓰기 후 다시 읽어 검증합니다. X-T5에는 이 예외 처리를 적용하지 않습니다. X-M5·X-T5 전송은 실험적 지원입니다.',
               style: TextStyle(fontSize: 12, color: Colors.black54),
             ),
           ],

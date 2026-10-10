@@ -52,7 +52,9 @@ Future<void> main() async {
   await run('model and slot counts', () async {
     check(CameraModel.xm5.slots.join(',') == '1,2,3,4', 'X-M5 banks');
     check(CameraModel.x100vi.slots.length == 7, 'X100VI banks');
-    check(CameraModel.fromName('X-T5') == null, 'Unsupported model');
+    check(CameraModel.fromName('X-T5') == CameraModel.xt5, 'X-T5 model');
+    check(CameraModel.xt5.slots.length == 7, 'X-T5 banks');
+    check(CameraModel.fromName('X-T4') == null, 'Unsupported model');
   });
   await run('X-M5 scan, write, restore, untouched bank and selector', () async {
     final fixture = Xm5Fixture(), camera = FujiCamera(Xm5Fixture());
@@ -106,9 +108,32 @@ Future<void> main() async {
     check(fixture.commands.isEmpty, 'No commands');
   });
   await run('unsupported model rejected', () async {
-    final camera = FujiCamera(Xm5Fixture(model: 'X-T5'));
+    final camera = FujiCamera(Xm5Fixture(model: 'X-T4'));
     await fails(() => camera.inspect(), (e) => e is StateError);
     check(camera.identity == null, 'Unsupported identity');
+  });
+  await run('X-T5 seven-bank scan, write and restore preserve other banks', () async {
+    final fixture = Xm5Fixture(model: 'X-T5', firmware: 'test');
+    final camera = FujiCamera(fixture); await camera.inspect();
+    final snapshots = await camera.backup(camera.profile.slots);
+    check(snapshots.length == 7 && fixture.written.isEmpty, 'Seven banks without recipe writes');
+    await camera.write(7, Recipe.fresh());
+    check(Reader(fixture.slots[7]![0xd18d]!).string() == 'My Recipe', 'C7 written');
+    check(Reader(fixture.slots[6]![0xd18d]!).string() == 'Original 6', 'C6 preserved');
+    await camera.restore(snapshots.last);
+    check(Reader(fixture.slots[7]![0xd18d]!).string() == 'Original 7' && fixture.selected == 4, 'Bank and selector restored');
+    fixture.commands.clear();
+    await fails(() => camera.write(8, Recipe.fresh()), (e) => e is RangeError);
+    check(fixture.commands.isEmpty, 'Invalid bank sends no command');
+  });
+  await run('X-T5 descriptor failures never use another model fallback', () async {
+    for (final fw in ['1.20', '1.32', 'test']) {
+      final fixture = Xm5Fixture(model: 'X-T5', firmware: fw)..descriptorsUnavailable = true;
+      final camera = FujiCamera(fixture); await camera.inspect();
+      await fails(() => camera.backup({7}), (e) => e is PtpResponseException);
+      await fails(() => camera.write(7, Recipe.fresh()), (e) => e is PtpResponseException);
+      check(fixture.written.isEmpty && fixture.selectedSlots.isEmpty, 'No setters');
+    }
   });
   await run('X100VI 1.32 fallback and seven-bank scan preserved', () async {
     final fixture = CameraFixture()..descriptorsUnavailable = true;

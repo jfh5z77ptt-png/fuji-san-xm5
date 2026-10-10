@@ -68,8 +68,13 @@ class Xm5Fixture extends CameraFixture {
           ...u16(1),
           ...u16(selected),
           2,
-          ...u16(4),
-          for (var i = 1; i <= 4; i++) ...u16(i),
+          ...u16(CameraModel.fromName(model)?.slotCount ?? 4),
+          for (
+            var i = 1;
+            i <= (CameraModel.fromName(model)?.slotCount ?? 4);
+            i++
+          )
+            ...u16(i),
         ]);
       }
       if (code == 0x1016) {
@@ -170,6 +175,62 @@ class Xm5ObservedFixture extends Xm5Fixture {
 }
 
 void main() {
+  test(
+    'X-T5 scans seven banks and restores one verified bank without affecting others',
+    () async {
+      final fixture = Xm5Fixture(model: 'X-T5', firmware: 'test');
+      final camera = FujiCamera(fixture);
+      await camera.inspect();
+      expect(camera.profile, CameraModel.xt5);
+      final snapshots = await camera.backup(camera.profile.slots);
+      expect(snapshots.map((s) => s.slot), [1, 2, 3, 4, 5, 6, 7]);
+      expect(fixture.written, isEmpty);
+      await camera.write(7, Recipe.fresh());
+      expect(Reader(fixture.slots[7]![0xd18d]!).string(), 'My Recipe');
+      expect(Reader(fixture.slots[6]![0xd18d]!).string(), 'Original 6');
+      await camera.restore(snapshots.last);
+      expect(Reader(fixture.slots[7]![0xd18d]!).string(), 'Original 7');
+      expect(fixture.selected, 4);
+      fixture.commands.clear();
+      await expectLater(camera.write(8, Recipe.fresh()), throwsRangeError);
+      expect(fixture.commands, isEmpty);
+    },
+  );
+  test('X-T5 never inherits another model descriptor exception', () async {
+    for (final firmware in ['1.20', '1.32', 'test']) {
+      final fixture = Xm5Fixture(model: 'X-T5', firmware: firmware)
+        ..descriptorsUnavailable = true;
+      final camera = FujiCamera(fixture);
+      await camera.inspect();
+      await expectLater(
+        camera.backup({7}),
+        throwsA(isA<PtpResponseException>()),
+      );
+      await expectLater(
+        camera.write(7, Recipe.fresh()),
+        throwsA(isA<PtpResponseException>()),
+      );
+      expect(fixture.selectedSlots, isEmpty);
+      expect(fixture.written, isEmpty);
+    }
+  });
+  test(
+    'X-T5 capability inspection remains read-only with missing properties',
+    () async {
+      final fixture = Xm5Fixture(
+        model: 'X-T5',
+        firmware: 'test',
+        missingProperty: 0xd18d,
+      )..descriptorsUnavailable = true;
+      final camera = FujiCamera(fixture);
+      final report = await camera.probeCapabilities();
+      expect(report['model'], 'X-T5');
+      expect(report['slotCount'], 7);
+      expect(report['recipeWrites'], false);
+      expect(report['slotSelectionWrites'], false);
+      expect(fixture.commands, isNot(contains(0x1016)));
+    },
+  );
   test(
     'X-M5 1.20 observed values scan, write and restore with exact descriptor fallback',
     () async {
@@ -279,7 +340,9 @@ void main() {
     expect(CameraModel.xm5.slots, {1, 2, 3, 4});
     expect(CameraModel.x100vi.slots.length, 7);
     expect(CameraModel.fromName('x-m5'), CameraModel.xm5);
-    expect(CameraModel.fromName('X-T5'), isNull);
+    expect(CameraModel.fromName(' x-t5 '), CameraModel.xt5);
+    expect(CameraModel.xt5.slots, {1, 2, 3, 4, 5, 6, 7});
+    expect(CameraModel.fromName('X-T4'), isNull);
   });
 
   test(
