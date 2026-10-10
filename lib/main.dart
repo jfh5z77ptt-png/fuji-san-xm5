@@ -1005,7 +1005,7 @@ class _WorkspaceState extends State<Workspace> {
       ),
       const SizedBox(height: 24),
       const Text(
-        'v$appRelease · X-M5 수정판 / 실기 미검증\nWindows X100VI 1.32 읽기·일괄 쓰기 확인 · 복원 미검증\nFUJIFILM 비공식 오픈소스 앱',
+        'v$appRelease · X-M5 1.20 USB 슬롯 조회 확인\nX-M5 레시피 전송·복원은 실기 미검증 · 처음에는 한 슬롯만 확인\nFUJIFILM 비공식 오픈소스 앱',
         style: TextStyle(fontSize: 11, color: Colors.black54),
       ),
     ],
@@ -1335,7 +1335,9 @@ class _WorkspaceState extends State<Workspace> {
       if (activeModel.experimental)
         const Padding(
           padding: EdgeInsets.symmetric(vertical: 12),
-          child: Text('X-M5는 실기 미검증입니다. 사진용 C1–C4를 사용하고 필름 시뮬레이션 다이얼을 C에 두세요.'),
+          child: Text(
+            'X-M5 1.20의 USB 슬롯 조회는 확인했습니다. 실제 C번호와 설정은 카메라에서 대조하세요. 전송·레시피 복원은 실기 미검증입니다. 사진용 C1–C4와 필름 시뮬레이션 다이얼 C를 사용하세요.',
+          ),
         ),
       const SizedBox(height: 12),
       Text(
@@ -1564,7 +1566,7 @@ class _RecipeEditorState extends State<RecipeEditor> {
                         ),
                 ),
             const Text(
-              '카메라 상태에 따라 사용 가능한 값이 달라질 수 있습니다. 기종별 설정 범위와 카메라 응답을 확인합니다. X100VI 1.32는 속성 설명 대신 알려진 설정 범위를 사용하며, 쓰기 후 읽기로 검증합니다.',
+              '카메라 상태에 따라 사용 가능한 값이 달라질 수 있습니다. 기종별 설정 범위와 카메라 응답을 확인합니다. X100VI 1.32와 X-M5 1.20에서 속성 설명 요청이 거부되면 앱의 설정 범위를 확인하고, 쓰기 후 다시 읽어 검증합니다. X-M5 전송은 실험적 지원입니다.',
               style: TextStyle(fontSize: 12, color: Colors.black54),
             ),
           ],

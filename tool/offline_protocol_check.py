@@ -160,6 +160,45 @@ Future<void> main() async {
     await fails(() async { await other.probeXm5Slots(); }, (e) => e is StateError);
     check(malformed.selectorWriteAttempts.isEmpty, 'Malformed selector, no writes');
   });
+  await run('X-M5 1.20 observed schema supports bounded scan, write and restore', () async {
+    final fixture = Xm5ObservedFixture(); final camera = FujiCamera(fixture);
+    await camera.inspect(); final backup = await camera.backup(camera.profile.slots);
+    check(backup.length == 4 && backup.first.values[0xd192] == 11 && backup.first.values[0xd190] == 400, 'Observed C1');
+    check(backup.first.values[0xd19d] == -10 && backup.first.values[0xd1a1] == 20480, 'Signed and enum encodings');
+    check(fixture.written.isEmpty, 'Read-only recipe scan');
+    await camera.write(4, Recipe.fresh()); await camera.restore(backup.last);
+    final restored = (await camera.backup({4})).single;
+    check(restored.rawName == backup.last.rawName && restored.values.toString() == backup.last.values.toString(), 'Recipe restored');
+    check(fixture.selected == 2 && !fixture.written.contains(0xd1a5), 'Selector and unknown fields preserved');
+  });
+  await run('X-M5 one-field edit persists backup before the only recipe write', () async {
+    final fixture = Xm5ObservedFixture(); final camera = FujiCamera(fixture);
+    await camera.inspect(); final original = (await camera.backup({4})).single;
+    var backedUp = false;
+    await camera.editSlot(original, SlotEdit(original.rawName, {...original.values, 0xd19f: 10}), (snapshots) async {
+      check(fixture.written.isEmpty && snapshots.single.rawName == original.rawName, 'Backup before setter');
+      backedUp = true;
+    });
+    check(backedUp && fixture.written.join(',') == '${0xd19f}' && fixture.selected == 2, 'Only color changed');
+  });
+  await run('X-M5 fallback is exact to firmware and GeneralError response', () async {
+    final fixture = Xm5Fixture(firmware: '1.20', rejectDescriptor: 0xd18c, descriptorErrorCode: 0x200f);
+    final camera = FujiCamera(fixture); await camera.inspect();
+    await fails(() async { await camera.backup({1}); }, (e) => e is PtpResponseException);
+    check(fixture.selectedSlots.isEmpty, 'Different error blocked');
+    final unknown = Xm5Fixture(firmware: '1.21')..descriptorsUnavailable = true;
+    final other = FujiCamera(unknown); await other.inspect();
+    await fails(() => other.write(1, Recipe.fresh()), (e) => e is PtpResponseException);
+    check(unknown.selectedSlots.isEmpty && unknown.written.isEmpty, 'Unknown firmware blocked');
+  });
+  await run('invalid X-M5 restore value and bank fail before USB traffic', () async {
+    final fixture = Xm5ObservedFixture(); final camera = FujiCamera(fixture);
+    await camera.inspect(); final snapshot = (await camera.backup({4})).single;
+    fixture.commands.clear();
+    await fails(() => camera.restore(Snapshot(4, {...snapshot.properties, 0xd1a2: u16(500)})), (e) => e is StateError);
+    await fails(() => camera.write(5, Recipe.fresh()), (e) => e is RangeError);
+    check(fixture.commands.isEmpty && fixture.written.isEmpty, 'No partial mutation');
+  });
   print('$passed offline protocol checks passed (simulated transport, no hardware).');
 }
 '''

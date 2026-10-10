@@ -17,9 +17,11 @@ class Xm5Fixture extends CameraFixture {
     this.firmware = '1.32',
     this.missingProperty,
     this.rejectDescriptor,
+    this.descriptorErrorCode = 0x2002,
   });
   final String model, firmware;
   final int? missingProperty, rejectDescriptor;
+  final int descriptorErrorCode;
   final commands = <int>[];
   final selectedSlots = <int>[];
   @override
@@ -54,7 +56,7 @@ class Xm5Fixture extends CameraFixture {
       ]);
     }
     if (code == 0x1014 && params.first == rejectDescriptor) {
-      throw PtpResponseException(0x2002, code);
+      throw PtpResponseException(descriptorErrorCode, code);
     }
     if (params.first == 0xd18c) {
       if (code == 0x1014) {
@@ -116,7 +118,161 @@ class Xm5ProbeFixture extends Xm5Fixture {
   }
 }
 
+class Xm5ObservedFixture extends Xm5Fixture {
+  Xm5ObservedFixture() : super(firmware: '1.20') {
+    selected = 2;
+    descriptorsUnavailable = true;
+    final observed = <int, int>{
+      0xd192: 11,
+      0xd191: 0,
+      0xd190: 400,
+      0xd193: 0,
+      0xd194: 0,
+      0xd195: 6,
+      0xd196: 2,
+      0xd197: 2,
+      0xd198: 1,
+      0xd199: 32775,
+      0xd19c: 4400,
+      0xd19a: 0,
+      0xd19b: 1,
+      0xd19d: -10,
+      0xd19e: -10,
+      0xd19f: 20,
+      0xd1a0: 0,
+      0xd1a1: 20480,
+      0xd1a2: 0,
+    };
+    for (final e in observed.entries) slots[1]![e.key] = u16(e.value);
+    for (var slot = 2; slot <= 4; slot++) {
+      slots[slot]![0xd192] = u16(1);
+      slots[slot]![0xd195] = u16(6);
+      slots[slot]![0xd19c] = u16(10000);
+    }
+  }
+
+  @override
+  Future<Uint8List> command(
+    int code, {
+    List<int> params = const [],
+    Uint8List? outgoing,
+  }) async {
+    final value = await super.command(code, params: params, outgoing: outgoing);
+    if (code == 0x1015 &&
+        params.first == 0xd195 &&
+        Reader(value).read16() == 1) {
+      return u16(6);
+    }
+    return value;
+  }
+}
+
 void main() {
+  test(
+    'X-M5 1.20 observed values scan, write and restore with exact descriptor fallback',
+    () async {
+      final fixture = Xm5ObservedFixture();
+      final camera = FujiCamera(fixture);
+      await camera.inspect();
+      final backup = await camera.backup(camera.profile.slots);
+      expect(backup.map((s) => s.slot), [1, 2, 3, 4]);
+      expect(backup.first.values[0xd192], 11);
+      expect(backup.first.values[0xd190], 400);
+      expect(backup.first.values[0xd199], 32775);
+      expect(backup.first.values[0xd19c], 4400);
+      expect(backup.first.values[0xd19d], -10);
+      expect(backup.first.values[0xd1a1], 20480);
+      expect(fixture.written, isEmpty);
+      await camera.write(4, Recipe.fresh());
+      expect(Reader(fixture.slots[4]![0xd192]!).read16(), 11);
+      await camera.restore(backup.last);
+      expect((await camera.backup({4})).single.toJson(), backup.last.toJson());
+      expect((await camera.backup({1})).single.toJson(), backup.first.toJson());
+      expect(fixture.selected, 2);
+      expect(fixture.written, isNot(contains(0xd1a5)));
+      expect(fixture.selectedSlots.every((s) => s >= 1 && s <= 4), isTrue);
+    },
+  );
+
+  test(
+    'X-M5 1.20 single-field edit saves backup before write and preserves other fields',
+    () async {
+      final fixture = Xm5ObservedFixture();
+      final camera = FujiCamera(fixture);
+      await camera.inspect();
+      final original = (await camera.backup({4})).single;
+      var saved = false;
+      await camera.editSlot(
+        original,
+        SlotEdit(original.rawName, {...original.values, 0xd19f: 10}),
+        (snapshots) async {
+          expect(fixture.written, isEmpty);
+          expect(snapshots.single.toJson(), original.toJson());
+          saved = true;
+        },
+      );
+      expect(saved, isTrue);
+      expect(fixture.written, [0xd19f]);
+      final changed = (await camera.backup({4})).single;
+      expect(changed.values[0xd19f], 10);
+      for (final e in original.properties.entries) {
+        if (e.key != 0xd19f) expect(changed.properties[e.key], e.value);
+      }
+      expect(fixture.selected, 2);
+    },
+  );
+
+  test(
+    'X-M5 fallback does not mask a different descriptor error or new firmware',
+    () async {
+      final wrongError = Xm5Fixture(
+        firmware: '1.20',
+        rejectDescriptor: 0xd18c,
+        descriptorErrorCode: 0x200f,
+      );
+      final camera = FujiCamera(wrongError);
+      await camera.inspect();
+      await expectLater(
+        camera.backup({1}),
+        throwsA(isA<PtpResponseException>()),
+      );
+      expect(wrongError.selectedSlots, isEmpty);
+      final unknown = Xm5Fixture(firmware: '1.21')
+        ..descriptorsUnavailable = true;
+      final other = FujiCamera(unknown);
+      await other.inspect();
+      await expectLater(
+        other.backup({1}),
+        throwsA(isA<PtpResponseException>()),
+      );
+      await expectLater(
+        other.write(1, Recipe.fresh()),
+        throwsA(isA<PtpResponseException>()),
+      );
+      expect(unknown.selectedSlots, isEmpty);
+      expect(unknown.written, isEmpty);
+    },
+  );
+
+  test(
+    'unrestorable X-M5 snapshot and invalid requested bank cannot write a recipe',
+    () async {
+      final fixture = Xm5ObservedFixture();
+      final camera = FujiCamera(fixture);
+      await camera.inspect();
+      final original = (await camera.backup({4})).single;
+      final invalid = Snapshot(4, {...original.properties, 0xd1a2: u16(500)});
+      fixture.commands.clear();
+      await expectLater(camera.restore(invalid), throwsStateError);
+      await expectLater(camera.write(5, Recipe.fresh()), throwsRangeError);
+      expect(fixture.commands, isEmpty);
+      expect(fixture.written, isEmpty);
+      fixture.slots[4]![0xd1a2] = u16(500);
+      await expectLater(camera.backup({4}), throwsStateError);
+      expect(fixture.written, isEmpty);
+      expect(fixture.selected, 2);
+    },
+  );
   test('X-M5 profile selects four banks, X100VI keeps seven', () {
     expect(CameraModel.xm5.slots, {1, 2, 3, 4});
     expect(CameraModel.x100vi.slots.length, 7);
@@ -199,13 +355,6 @@ void main() {
       expect(report.toString(), isNot(contains('Original')));
       expect(report.toString(), isNot(contains('test-private-serial')));
       expect(fixture.slots, before);
-      final selections = fixture.selectorWriteAttempts.toList();
-      await expectLater(
-        camera.write(1, Recipe.fresh()),
-        throwsA(isA<PtpResponseException>()),
-      );
-      expect(fixture.selectorWriteAttempts, selections);
-      expect(fixture.written, isEmpty);
     },
   );
 
