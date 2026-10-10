@@ -52,47 +52,47 @@ void main() {
     },
   );
 
-  test('captioned images are bounded, support single quotes and exclude third-party proxies', () {
-    final html = [
-      '<figure><img src=\'https://fujixweekly.files.wordpress.com/photo.jpg\'><figcaption>Fujifilm X-T5</figcaption></figure>',
-      for (var i = 0; i < 110; i++) figure('$i.jpg', 'Fujifilm X-M5'),
-    ].join();
-    expect(parseWeeklyPhotos(article, document(html)), hasLength(100));
-    expect(
-      parseWeeklyPhotos(
-        article,
-        document(
-          figure('photo.jpg', 'Fujifilm X-T5', host: 'i0.wp.com.evil.test'),
-        ),
-      ),
-      isEmpty,
-    );
-  });
-
   test(
-    'classic WordPress captions and modern figures retain article order',
+    'captioned images are bounded, support single quotes and exclude third-party proxies',
     () {
-      final html =
-          '<div id="attachment_13792" class="wp-caption aligncenter">'
-          '<a href="https://fujixweekly.com/full.jpg"><img data-src="https://example.com/ad.jpg" '
-          'src="https://i0.wp.com/fujixweekly.com/wp-content/uploads/2020/03/reeds.jpg?resize=799%2C533&#038;ssl=1" /></a>'
-          '<p class="wp-caption-text"><em>Winter Reeds</em> &#8211; Fujifilm X-T30</p></div>'
-          '${figure('modern.jpg', 'Modern — Fujifilm X-T5')}'
-          "<div class='aligncenter wp-caption'><img src='https://fujixweekly.files.wordpress.com/couch.jpg'>"
-          "<p class='wp-caption-text'>Yellow Couch &amp; Pillow — Fujifilm X-T30</p></div>"
-          '<div class="wp-caption"><img src="https://i0.wp.com/fujixweekly.com/app.jpg">'
-          '<p class="wp-caption-text">Download the app</p></div>';
-      final all = parseWeeklyPhotos(article, document(html));
-      expect(all.map((p) => p.caption), [
-        'Winter Reeds – Fujifilm X-T30',
-        'Modern — Fujifilm X-T5',
-        'Yellow Couch & Pillow — Fujifilm X-T30',
-      ]);
-      expect(all.first.url.queryParameters['ssl'], '1');
-      expect(all.first.url.path, endsWith('/reeds.jpg'));
-      expect(all.last.url.path, '/couch.jpg');
+      final html = [
+        '<figure><img src=\'https://fujixweekly.files.wordpress.com/photo.jpg\'><figcaption>Fujifilm X-T5</figcaption></figure>',
+        for (var i = 0; i < 110; i++) figure('$i.jpg', 'Fujifilm X-M5'),
+      ].join();
+      expect(parseWeeklyPhotos(article, document(html)), hasLength(100));
+      expect(
+        parseWeeklyPhotos(
+          article,
+          document(
+            figure('photo.jpg', 'Fujifilm X-T5', host: 'i0.wp.com.evil.test'),
+          ),
+        ),
+        isEmpty,
+      );
     },
   );
+
+  test('classic WordPress captions and modern figures retain article order', () {
+    final html =
+        '<div id="attachment_13792" class="wp-caption aligncenter">'
+        '<a href="https://fujixweekly.com/full.jpg"><img data-src="https://example.com/ad.jpg" '
+        'src="https://i0.wp.com/fujixweekly.com/wp-content/uploads/2020/03/reeds.jpg?resize=799%2C533&#038;ssl=1" /></a>'
+        '<p class="wp-caption-text"><em>Winter Reeds</em> &#8211; Fujifilm X-T30</p></div>'
+        '${figure('modern.jpg', 'Modern — Fujifilm X-T5')}'
+        "<div class='aligncenter wp-caption'><img src='https://fujixweekly.files.wordpress.com/couch.jpg'>"
+        "<p class='wp-caption-text'>Yellow Couch &amp; Pillow — Fujifilm X-T30</p></div>"
+        '<div class="wp-caption"><img src="https://i0.wp.com/fujixweekly.com/app.jpg">'
+        '<p class="wp-caption-text">Download the app</p></div>';
+    final all = parseWeeklyPhotos(article, document(html));
+    expect(all.map((p) => p.caption), [
+      'Winter Reeds – Fujifilm X-T30',
+      'Modern — Fujifilm X-T5',
+      'Yellow Couch & Pillow — Fujifilm X-T30',
+    ]);
+    expect(all.first.url.queryParameters['ssl'], '1');
+    expect(all.first.url.path, endsWith('/reeds.jpg'));
+    expect(all.last.url.path, '/couch.jpg');
+  });
 
   test('unsupported article sources never make network requests', () async {
     var calls = 0;
