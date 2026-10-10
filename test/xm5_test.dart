@@ -223,6 +223,7 @@ void main() {
         missingProperty: 0xd18d,
       )..descriptorsUnavailable = true;
       final camera = FujiCamera(fixture);
+      await camera.inspect(requireRecipeProperties: false);
       final report = await camera.probeCapabilities();
       expect(report['model'], 'X-T5');
       expect(report['slotCount'], 7);
@@ -529,7 +530,7 @@ void main() {
   });
 
   test('unsupported model remains rejected', () async {
-    final camera = FujiCamera(Xm5Fixture(model: 'X-T5'));
+    final camera = FujiCamera(Xm5Fixture(model: 'X-T4'));
     await expectLater(camera.inspect(), throwsStateError);
     expect(camera.identity, isNull);
   });
