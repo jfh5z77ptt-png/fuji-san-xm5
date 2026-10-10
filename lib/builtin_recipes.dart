@@ -1,7 +1,9 @@
 import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:url_launcher/url_launcher.dart';
+
 import 'domain/recipe.dart';
 import 'film_icon.dart';
 import 'recipe_photos.dart';
@@ -363,7 +365,7 @@ class _BuiltinCatalogState extends State<BuiltinCatalog> {
             ],
           ),
           Text(
-            '$shown개 · ${photoView ? '사진을 눌러 작례와 설정을 보고 선택하세요. 사진은 인터넷으로 원문에서 불러옵니다. ' : '눌러서 설정과 원문을 확인하고 라이브러리에 추가하세요. '}'
+            '$shown개 · ${photoView ? '카드의 화살표나 좌우 드래그로 작례를 넘겨 보세요. 사진을 누르면 설정을 확인할 수 있어요. 사진은 인터넷으로 원문에서 불러옵니다. ' : '눌러서 설정과 원문을 확인하고 라이브러리에 추가하세요. '}'
             '목록 출처: Fujifilm Film Simulation Recipes Database (Henri-Pierre Chavaz)',
             style: const TextStyle(fontSize: 12, color: Colors.black54),
           ),
@@ -527,6 +529,8 @@ class _BuiltinCatalogState extends State<BuiltinCatalog> {
           children: [
             Expanded(
               child: RecipePhotoThumbnail(
+                key: ValueKey(item.recipe.id),
+                onRetry: () => photos.retry(item.url),
                 article: item.url,
                 load: loadPhotos,
                 imageBuilder: widget.imageBuilder,

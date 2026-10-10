@@ -1,4 +1,7 @@
+import 'dart:ui' show PointerDeviceKind;
+
 import 'package:flutter/material.dart';
+
 import 'recipe_references.dart';
 
 typedef ReferenceImageBuilder = Widget Function(RecipePhoto photo);
@@ -27,41 +30,156 @@ class RecipeReferenceImage extends StatelessWidget {
   );
 }
 
-class RecipePhotoThumbnail extends StatelessWidget {
+class RecipePhotoThumbnail extends StatefulWidget {
   const RecipePhotoThumbnail({
     super.key,
     required this.article,
     required this.load,
+    required this.onRetry,
     this.imageBuilder,
   });
   final Uri article;
   final Future<List<RecipePhoto>> Function(Uri) load;
+  final VoidCallback onRetry;
   final ReferenceImageBuilder? imageBuilder;
+
+  @override
+  State<RecipePhotoThumbnail> createState() => _RecipePhotoThumbnailState();
+}
+
+class _RecipePhotoThumbnailState extends State<RecipePhotoThumbnail> {
+  late Future<List<RecipePhoto>> photos = widget.load(widget.article);
+  final pages = PageController();
+  int index = 0;
+
+  @override
+  void didUpdateWidget(RecipePhotoThumbnail oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.article != widget.article) {
+      photos = widget.load(widget.article);
+      index = 0;
+      if (pages.hasClients) pages.jumpToPage(0);
+    }
+  }
+
+  @override
+  void dispose() {
+    pages.dispose();
+    super.dispose();
+  }
+
+  void retry() {
+    widget.onRetry();
+    setState(() {
+      index = 0;
+      photos = widget.load(widget.article);
+    });
+  }
 
   @override
   Widget build(BuildContext context) => ColoredBox(
     color: const Color(0xfff0f1f3),
     child: FutureBuilder<List<RecipePhoto>>(
-      future: load(article),
+      future: photos,
       builder: (context, snapshot) {
         if (snapshot.connectionState != ConnectionState.done) {
           return const Center(child: CircularProgressIndicator(strokeWidth: 2));
         }
-        final photos = snapshot.data ?? const <RecipePhoto>[];
-        if (photos.isEmpty) {
-          return const Center(
+        final all = snapshot.data ?? const <RecipePhoto>[];
+        if (all.isEmpty) {
+          return Center(
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Icon(Icons.photo_outlined, color: Colors.black38),
-                SizedBox(height: 6),
-                Text('작례는 원문에서 확인', style: TextStyle(color: Colors.black54)),
+                const Icon(Icons.photo_outlined, color: Colors.black38),
+                const SizedBox(height: 6),
+                const Text(
+                  '사진을 불러오지 못했어요.',
+                  style: TextStyle(color: Colors.black54),
+                ),
+                TextButton.icon(
+                  onPressed: retry,
+                  icon: const Icon(Icons.refresh, size: 18),
+                  label: const Text('사진 다시 불러오기'),
+                ),
               ],
             ),
           );
         }
-        return (imageBuilder ?? (p) => RecipeReferenceImage(photo: p))(
-          photos.first,
+        return Stack(
+          fit: StackFit.expand,
+          children: [
+            ScrollConfiguration(
+              behavior: ScrollConfiguration.of(context).copyWith(
+                dragDevices: {
+                  PointerDeviceKind.touch,
+                  PointerDeviceKind.mouse,
+                  PointerDeviceKind.trackpad,
+                  PointerDeviceKind.stylus,
+                  PointerDeviceKind.invertedStylus,
+                },
+              ),
+              child: PageView.builder(
+                controller: pages,
+                itemCount: all.length,
+                onPageChanged: (i) => setState(() => index = i),
+                itemBuilder: (context, i) =>
+                    (widget.imageBuilder ??
+                    (p) => RecipeReferenceImage(photo: p))(all[i]),
+              ),
+            ),
+            if (all.length > 1) ...[
+              Align(
+                alignment: Alignment.centerLeft,
+                child: IconButton.filledTonal(
+                  tooltip: '카드 이전 작례',
+                  onPressed: index == 0
+                      ? null
+                      : () => pages.previousPage(
+                          duration: const Duration(milliseconds: 180),
+                          curve: Curves.easeOut,
+                        ),
+                  icon: const Icon(Icons.chevron_left),
+                ),
+              ),
+              Align(
+                alignment: Alignment.centerRight,
+                child: IconButton.filledTonal(
+                  tooltip: '카드 다음 작례',
+                  onPressed: index == all.length - 1
+                      ? null
+                      : () => pages.nextPage(
+                          duration: const Duration(milliseconds: 180),
+                          curve: Curves.easeOut,
+                        ),
+                  icon: const Icon(Icons.chevron_right),
+                ),
+              ),
+            ],
+            Positioned(
+              bottom: 8,
+              left: 0,
+              right: 0,
+              child: Center(
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    color: Colors.black.withValues(alpha: .65),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 3,
+                    ),
+                    child: Text(
+                      '${index + 1} / ${all.length}',
+                      style: const TextStyle(color: Colors.white, fontSize: 12),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ],
         );
       },
     ),
@@ -148,7 +266,10 @@ class _RecipePhotoGalleryState extends State<RecipePhotoGallery> {
               TextButton.icon(
                 onPressed: () {
                   widget.onRetry();
-                  setState(() => photos = widget.load(widget.article));
+                  setState(() {
+                    index = 0;
+                    photos = widget.load(widget.article);
+                  });
                 },
                 icon: const Icon(Icons.refresh),
                 label: const Text('사진 다시 불러오기'),

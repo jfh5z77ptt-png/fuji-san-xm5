@@ -102,19 +102,20 @@ List<RecipePhoto> parseWeeklyPhotos(Uri article, String body) {
   final content = json['content'] as String? ?? '';
   final photos = <RecipePhoto>[];
   final seen = <String>{};
-  // Only captioned camera photographs, never sidebar/affiliate/app banners.
-  for (final figure in RegExp(
-    r'<figure\b[^>]*>(.*?)</figure>',
+  // WordPress uses figures in newer posts and wp-caption divs in older posts.
+  // Keep both in article order, excluding uncaptioned affiliate/app banners.
+  for (final container in RegExp(
+    r'<figure\b[^>]*>(.*?)</figure>|<div\b[^>]*\bclass\s*=\s*["\x27][^"\x27]*\bwp-caption\b[^"\x27]*["\x27][^>]*>(.*?)</div>',
     caseSensitive: false,
     dotAll: true,
   ).allMatches(content)) {
-    final html = figure[1]!;
+    final html = container[1] ?? container[2]!;
     final captionTag = RegExp(
-      r'<figcaption\b[^>]*>(.*?)</figcaption>',
+      r'<figcaption\b[^>]*>(.*?)</figcaption>|<p\b[^>]*\bclass\s*=\s*["\x27][^"\x27]*\bwp-caption-text\b[^"\x27]*["\x27][^>]*>(.*?)</p>',
       caseSensitive: false,
       dotAll: true,
     ).firstMatch(html);
-    final caption = _plainText(captionTag?[1] ?? '');
+    final caption = _plainText(captionTag?[1] ?? captionTag?[2] ?? '');
     if (!RegExp(r'\bFujifilm\b', caseSensitive: false).hasMatch(caption)) {
       continue;
     }
@@ -132,7 +133,7 @@ List<RecipePhoto> parseWeeklyPhotos(Uri article, String body) {
       continue;
     }
     photos.add(RecipePhoto(url, caption));
-    if (photos.length == 12) {
+    if (photos.length == 100) {
       break;
     }
   }

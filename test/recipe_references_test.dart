@@ -52,23 +52,45 @@ void main() {
     },
   );
 
-  test(
-    'captioned images are bounded, support single quotes and exclude third-party proxies',
-    () {
-      final html = [
-        '<figure><img src=\'https://fujixweekly.files.wordpress.com/photo.jpg\'><figcaption>Fujifilm X-T5</figcaption></figure>',
-        for (var i = 0; i < 20; i++) figure('$i.jpg', 'Fujifilm X-M5'),
-      ].join();
-      expect(parseWeeklyPhotos(article, document(html)), hasLength(12));
-      expect(
-        parseWeeklyPhotos(
-          article,
-          document(
-            figure('photo.jpg', 'Fujifilm X-T5', host: 'i0.wp.com.evil.test'),
-          ),
+  test('captioned images are bounded, support single quotes and exclude third-party proxies', () {
+    final html = [
+      '<figure><img src=\'https://fujixweekly.files.wordpress.com/photo.jpg\'><figcaption>Fujifilm X-T5</figcaption></figure>',
+      for (var i = 0; i < 110; i++) figure('$i.jpg', 'Fujifilm X-M5'),
+    ].join();
+    expect(parseWeeklyPhotos(article, document(html)), hasLength(100));
+    expect(
+      parseWeeklyPhotos(
+        article,
+        document(
+          figure('photo.jpg', 'Fujifilm X-T5', host: 'i0.wp.com.evil.test'),
         ),
-        isEmpty,
-      );
+      ),
+      isEmpty,
+    );
+  });
+
+  test(
+    'classic WordPress captions and modern figures retain article order',
+    () {
+      final html =
+          '<div id="attachment_13792" class="wp-caption aligncenter">'
+          '<a href="https://fujixweekly.com/full.jpg"><img data-src="https://example.com/ad.jpg" '
+          'src="https://i0.wp.com/fujixweekly.com/wp-content/uploads/2020/03/reeds.jpg?resize=799%2C533&#038;ssl=1" /></a>'
+          '<p class="wp-caption-text"><em>Winter Reeds</em> &#8211; Fujifilm X-T30</p></div>'
+          '${figure('modern.jpg', 'Modern — Fujifilm X-T5')}'
+          "<div class='aligncenter wp-caption'><img src='https://fujixweekly.files.wordpress.com/couch.jpg'>"
+          "<p class='wp-caption-text'>Yellow Couch &amp; Pillow — Fujifilm X-T30</p></div>"
+          '<div class="wp-caption"><img src="https://i0.wp.com/fujixweekly.com/app.jpg">'
+          '<p class="wp-caption-text">Download the app</p></div>';
+      final all = parseWeeklyPhotos(article, document(html));
+      expect(all.map((p) => p.caption), [
+        'Winter Reeds – Fujifilm X-T30',
+        'Modern — Fujifilm X-T5',
+        'Yellow Couch & Pillow — Fujifilm X-T30',
+      ]);
+      expect(all.first.url.queryParameters['ssl'], '1');
+      expect(all.first.url.path, endsWith('/reeds.jpg'));
+      expect(all.last.url.path, '/couch.jpg');
     },
   );
 
@@ -198,6 +220,17 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.byType(RecipePhotoThumbnail), findsOneWidget);
       expect(find.byType(ListTile), findsNothing);
+      expect(find.text('1 / 2'), findsOneWidget);
+      await tester.tap(find.byTooltip('카드 다음 작례'));
+      await tester.pumpAndSettle();
+      expect(find.text('2 / 2'), findsOneWidget);
+      expect(find.byType(Dialog), findsNothing);
+      await tester.drag(
+        find.byType(RecipePhotoThumbnail),
+        const Offset(350, 0),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('1 / 2'), findsOneWidget);
       await tester.tap(find.text(weekly.recipe.name).first);
       await tester.pumpAndSettle();
       expect(find.text('작례 1 / 2'), findsOneWidget);
@@ -214,6 +247,53 @@ void main() {
       expect(tester.takeException(), isNull);
     },
   );
+
+  testWidgets('card retry restores photos and navigation on a phone', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(390, 1000);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    var calls = 0, retries = 0;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Center(
+            child: SizedBox(
+              width: 360,
+              height: 240,
+              child: RecipePhotoThumbnail(
+                article: article,
+                load: (_) async {
+                  calls++;
+                  if (calls == 1)
+                    throw StateError('temporary connection error');
+                  return samples;
+                },
+                onRetry: () => retries++,
+                imageBuilder: image,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('사진을 불러오지 못했어요.'), findsOneWidget);
+    await tester.tap(find.text('사진 다시 불러오기'));
+    await tester.pumpAndSettle();
+    expect(calls, 2);
+    expect(retries, 1);
+    expect(find.text('1 / 2'), findsOneWidget);
+    await tester.drag(find.byType(PageView), const Offset(-300, 0));
+    await tester.pumpAndSettle();
+    expect(find.text('2 / 2'), findsOneWidget);
+    await tester.tap(find.byTooltip('카드 이전 작례'));
+    await tester.pumpAndSettle();
+    expect(find.text('1 / 2'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
 
   testWidgets(
     'missing photos still allow recipe selection on a narrow screen',
@@ -234,11 +314,17 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
-      expect(find.text('작례는 원문에서 확인'), findsOneWidget);
+      expect(find.text('사진을 불러오지 못했어요.'), findsOneWidget);
       await tester.ensureVisible(find.text(weekly.recipe.name));
       await tester.tap(find.text(weekly.recipe.name));
       await tester.pumpAndSettle();
-      expect(find.text('사진 다시 불러오기'), findsOneWidget);
+      expect(
+        find.descendant(
+          of: find.byType(RecipePhotoGallery),
+          matching: find.text('사진 다시 불러오기'),
+        ),
+        findsOneWidget,
+      );
       await tester.tap(find.widgetWithText(FilledButton, '라이브러리에 추가'));
       await tester.pumpAndSettle();
       expect(added.single.values, weekly.recipe.values);
