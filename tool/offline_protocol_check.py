@@ -121,6 +121,45 @@ Future<void> main() async {
     check(fixture.selected == 4, 'Selector restored');
     check(Reader(fixture.slots[7]![0xd18d]!).string() == 'Original 7', 'C7 restored');
   });
+  await run('X-M5 1.20 candidate selection, restoration and zero recipe writes', () async {
+    final fixture = Xm5ProbeFixture(); final camera = FujiCamera(fixture);
+    await camera.inspect(); final report = await camera.probeXm5Slots();
+    check(report['success'] == true, 'Probe success');
+    check(report['originalSelectorRestored'] == true && report['originalRecipeFieldsUnchanged'] == true, 'Restored content');
+    check(report['distinctRecipeSignatures'] == 4, 'Distinct bank names, kept private');
+    check(fixture.selectorWriteAttempts.join(',') == '1,2,3,4,2', 'Bounded selection');
+    check(fixture.written.isEmpty && !fixture.commands.contains(0x1014), 'Only selector writes, no descriptor assumption');
+    check(!report.toString().contains('Original') && !report.toString().contains('test-private-serial'), 'No names or serial');
+    check(report['physicalCMappingVerified'] == false, 'No physical bank mapping claim');
+  });
+  await run('ignored selector stops probe and restores original', () async {
+    final fixture = Xm5ProbeFixture(ignoreCandidate: 1); final camera = FujiCamera(fixture);
+    await camera.inspect(); final report = await camera.probeXm5Slots();
+    check(report['success'] == false && report['originalSelectorRestored'] == true, 'Mismatch reported and restored');
+    check(fixture.selectorWriteAttempts.join(',') == '1,2' && fixture.written.isEmpty, 'Stop at mismatch');
+  });
+  await run('read failure preserves partial probe and restoration', () async {
+    final fixture = Xm5ProbeFixture(failReadAt: 3); final camera = FujiCamera(fixture);
+    await camera.inspect(); final report = await camera.probeXm5Slots();
+    check(report['success'] == false && report['originalRecipeFieldsUnchanged'] == true, 'Failed read and unchanged original');
+    check(fixture.selectorWriteAttempts.join(',') == '1,2,3,2' && fixture.written.isEmpty, 'Restores after failure');
+  });
+  await run('restoration failure is explicit in diagnostic report', () async {
+    final fixture = Xm5ProbeFixture(failRestoration: true); final camera = FujiCamera(fixture);
+    await camera.inspect(); final report = await camera.probeXm5Slots();
+    check(report['success'] == false && report['originalSelectorRestored'] == false && report.containsKey('restoreError'), 'Never claim restored');
+    check(fixture.written.isEmpty, 'No recipe writes');
+  });
+  await run('unobserved firmware and malformed selector prevent probe writes', () async {
+    final fixture = Xm5Fixture(firmware: '1.21'); final camera = FujiCamera(fixture);
+    await camera.inspect(); fixture.commands.clear();
+    await fails(() async { await camera.probeXm5Slots(); }, (e) => e is StateError);
+    check(fixture.commands.isEmpty, 'Unknown firmware, no USB traffic');
+    final malformed = Xm5ProbeFixture(malformedSelector: true); final other = FujiCamera(malformed);
+    await other.inspect();
+    await fails(() async { await other.probeXm5Slots(); }, (e) => e is StateError);
+    check(malformed.selectorWriteAttempts.isEmpty, 'Malformed selector, no writes');
+  });
   print('$passed offline protocol checks passed (simulated transport, no hardware).');
 }
 '''

@@ -187,10 +187,121 @@ class FujiCamera implements RecipeCamera {
     }
   }
 
+  // Explicit diagnostic for the observed X-M5 1.20 descriptor failure. This
+  // bypass applies only to candidate selector values, never recipe writes.
+  Future<Map<String, dynamic>> probeXm5Slots() async {
+    _ready();
+    if (identity!.model != 'X-M5' || identity!.firmware != '1.20') {
+      throw StateError('슬롯 전환 진단은 X-M5 펌웨어 1.20 전용입니다.');
+    }
+    final ids = [0xd18d, ...settings.map((s) => s.id)];
+    if (!operations.contains(0x1015) ||
+        !operations.contains(0x1016) ||
+        !identity!.properties.contains(0xd18c) ||
+        ids.any((id) => !identity!.properties.contains(id))) {
+      throw StateError('슬롯 진단에 필요한 USB 명령이나 속성이 없습니다.');
+    }
+    final original = await read(0xd18c);
+    if (original.length != 2) {
+      throw StateError('슬롯 선택값이 2바이트가 아니므로 진단을 중단합니다.');
+    }
+    final originalSlot = Reader(original).read16();
+    profile.validateSlots([originalSlot]);
+
+    Future<Map<int, Uint8List>> readFields() async {
+      final fields = <int, Uint8List>{};
+      for (final id in ids) {
+        final value = await read(id);
+        if (id == 0xd18d) {
+          DiagnosticLog.instance.protect(Reader(value).string());
+        } else if (value.length != 2) {
+          throw StateError('속성 0x${id.toRadixString(16)} 길이 오류');
+        }
+        fields[id] = value;
+      }
+      return fields;
+    }
+
+    final before = await readFields();
+    final rows = <Map<String, dynamic>>[];
+    final signatures = <String>{};
+    final result = <String, dynamic>{
+      'diagnostic': 'xm5-slot-selection',
+      'model': identity!.model,
+      'firmware': identity!.firmware,
+      'recipeWrites': false,
+      'slotSelectionWrites': false,
+      'physicalCMappingVerified': false,
+      'originalSelector': originalSlot,
+      'originalSelectorHex': _hex(original),
+      'candidateSelectors': rows,
+      'originalSelectorRestored': false,
+      'originalRecipeFieldsUnchanged': false,
+      'success': false,
+    };
+    var attemptedSelection = false;
+    try {
+      for (final candidate in profile.slots) {
+        final row = <String, dynamic>{'selectorSent': candidate};
+        rows.add(row);
+        attemptedSelection = true;
+        result['slotSelectionWrites'] = true;
+        await set(0xd18c, u16(candidate));
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+        final selected = await read(0xd18c);
+        row['selectorReadHex'] = _hex(selected);
+        if (!_same(selected, u16(candidate))) {
+          throw StateError('선택값 $candidate 읽기 검증 실패');
+        }
+        row['selectorReadMatched'] = true;
+        final fields = await readFields();
+        row['recipeValuesHex'] = {
+          for (final s in settings) s.id.toRadixString(16): _hex(fields[s.id]!),
+        };
+        // Names distinguish banks without exporting private recipe names.
+        signatures.add(ids.map((id) => _hex(fields[id]!)).join('|'));
+      }
+    } catch (e) {
+      result['error'] = DiagnosticLog.instance.redact('$e');
+    } finally {
+      if (attemptedSelection) {
+        try {
+          await set(0xd18c, original);
+          await Future<void>.delayed(const Duration(milliseconds: 100));
+          final restored = await read(0xd18c);
+          result['restoredSelectorHex'] = _hex(restored);
+          result['originalSelectorRestored'] = _same(restored, original);
+          if (result['originalSelectorRestored'] != true) {
+            throw StateError('원래 선택값을 복원하지 못했습니다.');
+          }
+          final after = await readFields();
+          result['originalRecipeFieldsUnchanged'] = ids.every(
+            (id) => _same(before[id]!, after[id]!),
+          );
+        } catch (e) {
+          result['restoreError'] = DiagnosticLog.instance.redact('$e');
+        }
+      }
+    }
+    result['distinctRecipeSignatures'] = signatures.length;
+    result['success'] =
+        !result.containsKey('error') &&
+        !result.containsKey('restoreError') &&
+        rows.length == profile.slotCount &&
+        result['originalSelectorRestored'] == true &&
+        result['originalRecipeFieldsUnchanged'] == true;
+    return result;
+  }
+
   @override
   Future<List<Snapshot>> backup(Set<int> slots) async {
     _ready();
     profile.validateSlots(slots);
+    if (profile.experimental) {
+      for (final slot in slots) {
+        await _validateDescriptor(0xd18c, u16(slot));
+      }
+    }
     final original = await read(0xd18c);
     final result = <Snapshot>[];
     try {
@@ -305,6 +416,7 @@ class FujiCamera implements RecipeCamera {
   Future<void> _write(int slot, Map<int, Uint8List> p) async {
     _ready();
     profile.validateSlots([slot]);
+    if (profile.experimental) await _validateDescriptor(0xd18c, u16(slot));
     final original = await read(0xd18c);
     try {
       await select(slot);

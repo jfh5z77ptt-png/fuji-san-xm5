@@ -516,6 +516,51 @@ class _WorkspaceState extends State<Workspace> {
     });
   }
 
+  Future<void> diagnoseXm5Slots() async {
+    if (!await confirm(
+      'X-M5 슬롯 전환 진단',
+      'X-M5 펌웨어 1.20 전용 검사입니다. USB의 슬롯 선택값 1~4를 차례로 보내고 레시피를 읽은 뒤 원래 선택값으로 복원합니다. 레시피 설정값이나 이름을 쓰는 명령은 보내지 않습니다. 이 선택값이 실제 C1~C4와 같은지는 아직 확인되지 않았습니다.\n\n카메라 한 대만 연결하고, 검사 중 케이블을 분리하지 마세요. 오류가 나면 결과를 복사하고 카메라 상태를 확인하세요.',
+      confirmLabel: '진단 실행',
+    )) {
+      return;
+    }
+    await run(() async {
+      final ownConnection = !transport.opened;
+      try {
+        if (ownConnection) {
+          final devices = await transport.discover();
+          if (devices.length != 1) {
+            throw StateError('진단할 후지필름 카메라 한 대만 연결하세요.');
+          }
+          await transport.open(devices.single['id'] as String);
+        }
+        await camera.inspect();
+        final result = await camera.probeXm5Slots();
+        final restored = result['originalSelectorRestored'] == true;
+        await copyJson(
+          result['success'] == true
+              ? 'X-M5 슬롯 진단 결과 · JSON을 보내주세요'
+              : restored
+              ? '슬롯 진단 실패 · 원래 선택값 복원됨'
+              : '슬롯 진단 실패 · 카메라 선택 상태를 확인하세요',
+          const JsonEncoder.withIndent('  ').convert(result),
+        );
+        report(
+          result['success'] == true
+              ? '슬롯 진단 완료 · 레시피 쓰기 없음 · 원래 선택값 복원됨'
+              : restored
+              ? '슬롯 진단 실패 · 결과 JSON을 확인하세요.'
+              : '원래 선택값 복원이 확인되지 않았습니다. 카메라 상태를 확인하세요.',
+        );
+      } finally {
+        if (ownConnection) {
+          await transport.close();
+          camera.identity = null;
+        }
+      }
+    });
+  }
+
   Future<void> assign(int slot) async {
     final id = await showDialog<String>(
       context: context,
@@ -621,7 +666,11 @@ class _WorkspaceState extends State<Workspace> {
     });
   }
 
-  Future<bool> confirm(String title, String text) async =>
+  Future<bool> confirm(
+    String title,
+    String text, {
+    String confirmLabel = '적용',
+  }) async =>
       await showDialog<bool>(
         context: context,
         builder: (ctx) => AlertDialog(
@@ -634,7 +683,7 @@ class _WorkspaceState extends State<Workspace> {
             ),
             FilledButton(
               onPressed: () => Navigator.pop(ctx, true),
-              child: const Text('적용'),
+              child: Text(confirmLabel),
             ),
           ],
         ),
@@ -906,6 +955,13 @@ class _WorkspaceState extends State<Workspace> {
         title: const Text('카메라 호환성 진단'),
         subtitle: const Text('설정을 변경하지 않고 USB 속성 확인'),
         onTap: busy ? null : diagnoseCapabilities,
+      ),
+      ListTile(
+        contentPadding: EdgeInsets.zero,
+        leading: const Icon(Icons.swap_horiz),
+        title: const Text('X-M5 슬롯 전환 진단'),
+        subtitle: const Text('1.20 전용 · 선택값 변경 후 복원 · 레시피 쓰기 없음'),
+        onTap: busy ? null : diagnoseXm5Slots,
       ),
       const Divider(height: 48),
       ListTile(

@@ -2,10 +2,40 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:fuji_san/domain/recipe.dart';
 import 'package:fuji_san/main.dart';
+import 'package:fuji_san/camera/ptp.dart';
 
 import 'ui_test.dart' show MemoryStore;
 
 void main() {
+  testWidgets('slot probe cancellation sends no native camera calls', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1440, 1200);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final messenger =
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    final calls = <String>[];
+    messenger.setMockMethodCallHandler(NativeTransport.channel, (call) async {
+      calls.add(call.method);
+      return <dynamic>[];
+    });
+    addTearDown(
+      () => messenger.setMockMethodCallHandler(NativeTransport.channel, null),
+    );
+    await tester.pumpWidget(FujiSanApp(store: MemoryStore()));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('X-M5 슬롯 전환 진단'));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('USB의 슬롯 선택값 1~4'), findsOneWidget);
+    expect(find.text('진단 실행'), findsOneWidget);
+    expect(calls, isEmpty);
+    await tester.tap(find.text('취소'));
+    await tester.pumpAndSettle();
+    expect(calls, isEmpty);
+    expect(tester.takeException(), isNull);
+  });
   testWidgets(
     'switch to X-M5 shows four banks and preserves hidden assignments',
     (tester) async {

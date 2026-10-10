@@ -14,10 +14,11 @@ Uint8List u32(int n) =>
 class Xm5Fixture extends CameraFixture {
   Xm5Fixture({
     this.model = 'X-M5',
+    this.firmware = '1.32',
     this.missingProperty,
     this.rejectDescriptor,
   });
-  final String model;
+  final String model, firmware;
   final int? missingProperty, rejectDescriptor;
   final commands = <int>[];
   final selectedSlots = <int>[];
@@ -48,7 +49,7 @@ class Xm5Fixture extends CameraFixture {
         ...array([]),
         ...ptpString('FUJIFILM'),
         ...ptpString(model),
-        ...ptpString('1.32'),
+        ...ptpString(firmware),
         ...ptpString('test-private-serial'),
       ]);
     }
@@ -71,6 +72,44 @@ class Xm5Fixture extends CameraFixture {
       }
       if (code == 0x1016) {
         selectedSlots.add(Reader(outgoing!).read16());
+      }
+    }
+    return super.command(code, params: params, outgoing: outgoing);
+  }
+}
+
+class Xm5ProbeFixture extends Xm5Fixture {
+  Xm5ProbeFixture({
+    this.ignoreCandidate,
+    this.failReadAt,
+    this.failRestoration = false,
+    this.malformedSelector = false,
+  }) : super(firmware: '1.20') {
+    selected = 2;
+    descriptorsUnavailable = true;
+  }
+  final int? ignoreCandidate, failReadAt;
+  final bool failRestoration, malformedSelector;
+  final selectorWriteAttempts = <int>[];
+
+  @override
+  Future<Uint8List> command(
+    int code, {
+    List<int> params = const [],
+    Uint8List? outgoing,
+  }) async {
+    if (code == 0x1015 && params.first == 0xd18c && malformedSelector) {
+      return Uint8List.fromList([2]);
+    }
+    if (code == 0x1015 && params.first == 0xd192 && selected == failReadAt) {
+      throw PtpResponseException(0x2002, code);
+    }
+    if (code == 0x1016 && params.first == 0xd18c) {
+      final candidate = Reader(outgoing!).read16();
+      selectorWriteAttempts.add(candidate);
+      if (candidate == ignoreCandidate) return Uint8List(0);
+      if (failRestoration && selectorWriteAttempts.length > 4) {
+        throw PtpResponseException(0x2002, code);
       }
     }
     return super.command(code, params: params, outgoing: outgoing);
@@ -127,7 +166,112 @@ void main() {
     );
     expect(fixture.written, isEmpty);
     expect(fixture.selected, 4);
+    expect(fixture.selectedSlots, isEmpty);
+    await expectLater(
+      camera.backup({1, 2, 3, 4}),
+      throwsA(isA<PtpResponseException>()),
+    );
+    expect(fixture.selectedSlots, isEmpty);
   });
+
+  test(
+    'X-M5 1.20 slot probe works without descriptors and writes only selector',
+    () async {
+      final fixture = Xm5ProbeFixture();
+      final camera = FujiCamera(fixture);
+      await camera.inspect();
+      final before = {
+        for (final e in fixture.slots.entries)
+          e.key: {for (final p in e.value.entries) p.key: p.value.toList()},
+      };
+      final report = await camera.probeXm5Slots();
+      expect(report['success'], isTrue);
+      expect(report['recipeWrites'], isFalse);
+      expect(report['slotSelectionWrites'], isTrue);
+      expect(report['physicalCMappingVerified'], isFalse);
+      expect(report['originalSelectorRestored'], isTrue);
+      expect(report['originalRecipeFieldsUnchanged'], isTrue);
+      expect(report['distinctRecipeSignatures'], 4);
+      expect(fixture.selectorWriteAttempts, [1, 2, 3, 4, 2]);
+      expect(fixture.written, isEmpty);
+      expect(fixture.selected, 2);
+      expect(fixture.commands, isNot(contains(0x1014)));
+      expect(report.toString(), isNot(contains('Original')));
+      expect(report.toString(), isNot(contains('test-private-serial')));
+      expect(fixture.slots, before);
+      final selections = fixture.selectorWriteAttempts.toList();
+      await expectLater(
+        camera.write(1, Recipe.fresh()),
+        throwsA(isA<PtpResponseException>()),
+      );
+      expect(fixture.selectorWriteAttempts, selections);
+      expect(fixture.written, isEmpty);
+    },
+  );
+
+  test('slot probe stops on ignored selection and restores original', () async {
+    final fixture = Xm5ProbeFixture(ignoreCandidate: 1);
+    final camera = FujiCamera(fixture);
+    await camera.inspect();
+    final report = await camera.probeXm5Slots();
+    expect(report['success'], isFalse);
+    expect(report['error'], contains('읽기 검증 실패'));
+    expect(report['originalSelectorRestored'], isTrue);
+    expect(fixture.selectorWriteAttempts, [1, 2]);
+    expect(fixture.selected, 2);
+    expect(fixture.written, isEmpty);
+  });
+
+  test(
+    'slot probe preserves partial report and restores after property read failure',
+    () async {
+      final fixture = Xm5ProbeFixture(failReadAt: 3);
+      final camera = FujiCamera(fixture);
+      await camera.inspect();
+      final report = await camera.probeXm5Slots();
+      expect(report['success'], isFalse);
+      expect((report['candidateSelectors'] as List).length, 3);
+      expect(report['originalSelectorRestored'], isTrue);
+      expect(report['originalRecipeFieldsUnchanged'], isTrue);
+      expect(fixture.selectorWriteAttempts, [1, 2, 3, 2]);
+      expect(fixture.selected, 2);
+      expect(fixture.written, isEmpty);
+    },
+  );
+
+  test('slot probe explicitly reports restoration failure', () async {
+    final fixture = Xm5ProbeFixture(failRestoration: true);
+    final camera = FujiCamera(fixture);
+    await camera.inspect();
+    final report = await camera.probeXm5Slots();
+    expect(report['success'], isFalse);
+    expect(report['originalSelectorRestored'], isFalse);
+    expect(report['restoreError'], contains('0x2002'));
+    expect(fixture.selected, 4);
+    expect(fixture.written, isEmpty);
+  });
+
+  test(
+    'slot probe rejects unknown firmware and malformed original without writes',
+    () async {
+      final unknown = Xm5Fixture(firmware: '1.21');
+      final camera = FujiCamera(unknown);
+      await camera.inspect();
+      unknown.commands.clear();
+      await expectLater(camera.probeXm5Slots(), throwsStateError);
+      expect(unknown.commands, isEmpty);
+      final malformed = Xm5ProbeFixture(malformedSelector: true);
+      final other = FujiCamera(malformed);
+      await other.inspect();
+      await expectLater(other.probeXm5Slots(), throwsStateError);
+      expect(malformed.selectorWriteAttempts, isEmpty);
+      final outOfRange = Xm5ProbeFixture()..selected = 0;
+      final third = FujiCamera(outOfRange);
+      await third.inspect();
+      await expectLater(third.probeXm5Slots(), throwsRangeError);
+      expect(outOfRange.selectorWriteAttempts, isEmpty);
+    },
+  );
 
   test(
     'late descriptor failure blocks every recipe write and restores selector',
