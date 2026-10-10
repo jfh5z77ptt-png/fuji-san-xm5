@@ -55,9 +55,10 @@ void main() {
   test(
     'captioned images are bounded, support single quotes and exclude third-party proxies',
     () {
-      final html =
-          '<figure><img src=\'https://fujixweekly.files.wordpress.com/photo.jpg\'><figcaption>Fujifilm X-T5</figcaption></figure>' +
-          List.generate(20, (i) => figure('$i.jpg', 'Fujifilm X-M5')).join();
+      final html = [
+        '<figure><img src=\'https://fujixweekly.files.wordpress.com/photo.jpg\'><figcaption>Fujifilm X-T5</figcaption></figure>',
+        for (var i = 0; i < 20; i++) figure('$i.jpg', 'Fujifilm X-M5'),
+      ].join();
       expect(parseWeeklyPhotos(article, document(html)), hasLength(12));
       expect(
         parseWeeklyPhotos(
