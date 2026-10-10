@@ -143,7 +143,9 @@ class Xm5ObservedFixture extends Xm5Fixture {
       0xd1a1: 20480,
       0xd1a2: 0,
     };
-    for (final e in observed.entries) slots[1]![e.key] = u16(e.value);
+    for (final e in observed.entries) {
+      slots[1]![e.key] = u16(e.value);
+    }
     for (var slot = 2; slot <= 4; slot++) {
       slots[slot]![0xd192] = u16(1);
       slots[slot]![0xd195] = u16(6);
