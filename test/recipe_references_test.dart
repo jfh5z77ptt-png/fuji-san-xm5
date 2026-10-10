@@ -267,8 +267,9 @@ void main() {
                 article: article,
                 load: (_) async {
                   calls++;
-                  if (calls == 1)
+                  if (calls == 1) {
                     throw StateError('temporary connection error');
+                  }
                   return samples;
                 },
                 onRetry: () => retries++,
