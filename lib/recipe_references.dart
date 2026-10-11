@@ -15,16 +15,49 @@ bool hasWeeklyPhotos(Uri article) =>
     article.host == 'fujixweekly.com' &&
     RegExp(r'^/\d{4}/\d{2}/\d{2}/[^/]+/?$').hasMatch(article.path);
 
-Uri weeklyPhotoEndpoint(Uri article) {
-  if (!hasWeeklyPhotos(article)) {
+bool hasRecipePhotos(Uri article) =>
+    hasWeeklyPhotos(article) ||
+    (article.scheme == 'https' &&
+        ((article.host == 'film.recipes' &&
+                RegExp(
+                  r'^/\d{4}/\d{2}/\d{2}/[^/]+/?$',
+                ).hasMatch(article.path)) ||
+            (article.host == 'piotrecipes.wordpress.com' &&
+                RegExp(r'^/[^/]+-x-trans-iv/?$').hasMatch(article.path))));
+
+String recipePhotoSource(Uri article) => switch (article.host) {
+  'fujixweekly.com' => 'Fuji X Weekly',
+  'film.recipes' => 'Film Recipes',
+  'piotrecipes.wordpress.com' => 'Piot Recipes',
+  _ => '원문',
+};
+
+String unsupportedPhotoMessage(Uri article) {
+  if (article.host == 'www.youtube.com') return '영상 원문에서 작례를 확인하세요.';
+  if (article.host == 'www.facebook.com' ||
+      article.host == 'www.instagram.com') {
+    return 'SNS 원문에서 작례를 확인하세요.';
+  }
+  return '이 출처의 사진은 원문에서 확인하세요.';
+}
+
+Uri recipePhotoEndpoint(Uri article) {
+  if (!hasRecipePhotos(article)) {
     throw const FormatException('이 원문은 작례 사진 연결을 지원하지 않습니다.');
   }
   final slug = article.pathSegments.where((s) => s.isNotEmpty).last;
   return Uri.https(
     'public-api.wordpress.com',
-    '/rest/v1.1/sites/fujixweekly.com/posts/slug:$slug',
+    '/rest/v1.1/sites/${article.host}/posts/slug:$slug',
     {'fields': 'URL,content'},
   );
+}
+
+Uri weeklyPhotoEndpoint(Uri article) {
+  if (!hasWeeklyPhotos(article)) {
+    throw const FormatException('이 원문은 Fuji X Weekly 글이 아닙니다.');
+  }
+  return recipePhotoEndpoint(article);
 }
 
 String _plainText(String text) => text
@@ -78,16 +111,37 @@ String? _attribute(String tag, String name) {
   return m == null ? null : _plainText(m[2]!);
 }
 
-bool _photoHost(Uri url) =>
-    url.scheme == 'https' &&
-    (url.host == 'fujixweekly.com' ||
-        url.host == 'fujixweekly.files.wordpress.com' ||
-        (RegExp(r'^i[0-3]\.wp\.com$').hasMatch(url.host) &&
-            (url.path.startsWith('/fujixweekly.com/') ||
-                url.path.startsWith('/fujixweekly.files.wordpress.com/'))));
+bool _photoHost(Uri article, Uri url) {
+  if (url.scheme != 'https' ||
+      url.userInfo.isNotEmpty ||
+      (url.hasPort && url.port != 443))
+    return false;
+  final hosts = switch (article.host) {
+    'fujixweekly.com' => {'fujixweekly.com', 'fujixweekly.files.wordpress.com'},
+    'film.recipes' => {
+      'film.recipes',
+      'filmrecipes239715696.files.wordpress.com',
+    },
+    'piotrecipes.wordpress.com' => {
+      'piotrecipes.wordpress.com',
+      'piotrecipes.files.wordpress.com',
+    },
+    _ => <String>{},
+  };
+  if (hosts.contains(url.host)) return true;
+  return RegExp(r'^i[0-3]\.wp\.com$').hasMatch(url.host) &&
+      hosts.any((h) => url.path.startsWith('/$h/'));
+}
 
-List<RecipePhoto> parseWeeklyPhotos(Uri article, String body) {
-  if (!hasWeeklyPhotos(article)) {
+String _photoKey(Uri url) => RegExp(r'^i[0-3]\.wp\.com$').hasMatch(url.host)
+    ? url.path.substring(1)
+    : '${url.host}${url.path}';
+
+List<RecipePhoto> parseWeeklyPhotos(Uri article, String body) =>
+    hasWeeklyPhotos(article) ? parseRecipePhotos(article, body) : const [];
+
+List<RecipePhoto> parseRecipePhotos(Uri article, String body) {
+  if (!hasRecipePhotos(article)) {
     return const [];
   }
   final json = jsonDecode(body) as Map<String, dynamic>;
@@ -100,6 +154,12 @@ List<RecipePhoto> parseWeeklyPhotos(Uri article, String body) {
     throw const FormatException('원문 주소와 사진 출처가 일치하지 않습니다.');
   }
   final content = json['content'] as String? ?? '';
+  if (article.host == 'film.recipes') {
+    return _parseFilmPhotos(article, content);
+  }
+  if (article.host == 'piotrecipes.wordpress.com') {
+    return _parsePiotPhotos(article, content);
+  }
   final photos = <RecipePhoto>[];
   final seen = <String>{};
   // WordPress uses figures in newer posts and wp-caption divs in older posts.
@@ -127,15 +187,104 @@ List<RecipePhoto> parseWeeklyPhotos(Uri article, String body) {
       continue;
     }
     final url = Uri.tryParse(_attribute(image[0]!, 'src') ?? '');
-    if (url == null ||
-        !_photoHost(url) ||
-        !seen.add('${url.host}${url.path}')) {
+    if (url == null || !_photoHost(article, url) || !seen.add(_photoKey(url))) {
       continue;
     }
     photos.add(RecipePhoto(url, caption));
     if (photos.length == 100) {
       break;
     }
+  }
+  return List.unmodifiable(photos);
+}
+
+List<RecipePhoto> _parseFilmPhotos(Uri article, String content) {
+  // Stop before recommendations: their images belong to different recipes.
+  for (final heading in RegExp(
+    r'<h[1-6]\b[^>]*>(.*?)</h[1-6]>',
+    caseSensitive: false,
+    dotAll: true,
+  ).allMatches(content)) {
+    if (RegExp(
+      r'(?:more|similar|other) recipes',
+      caseSensitive: false,
+    ).hasMatch(_plainText(heading[1]!))) {
+      content = content.substring(0, heading.start);
+      break;
+    }
+  }
+  final photos = <RecipePhoto>[];
+  final seen = <String>{};
+  void add(String tag, String caption) {
+    final src = _attribute(tag, 'src');
+    if (src == null || src.isEmpty || photos.length >= 100) return;
+    final url = article.resolve(src);
+    if (!_photoHost(article, url) || !seen.add(_photoKey(url))) return;
+    photos.add(RecipePhoto(url, caption));
+  }
+
+  for (final image in RegExp(
+    r'<img\b[^>]*>',
+    caseSensitive: false,
+  ).allMatches(content)) {
+    final tag = image[0]!;
+    final caption = _attribute(tag, 'alt') ?? '';
+    if (RegExp(
+      r'\bfilm recipe (?:sample photo|photo by\b)',
+      caseSensitive: false,
+    ).hasMatch(caption))
+      add(tag, caption);
+  }
+  // Older posts use empty alt text and descriptive figure captions.
+  if (photos.isEmpty) {
+    for (final figure in RegExp(
+      r'<figure\b[^>]*>(.*?)</figure>',
+      caseSensitive: false,
+      dotAll: true,
+    ).allMatches(content)) {
+      final html = figure[1]!;
+      final caption = _plainText(
+        RegExp(
+              r'<figcaption\b[^>]*>(.*?)</figcaption>',
+              caseSensitive: false,
+              dotAll: true,
+            ).firstMatch(html)?[1] ??
+            '',
+      );
+      final image = RegExp(
+        r'<img\b[^>]*>',
+        caseSensitive: false,
+      ).firstMatch(html);
+      if (caption.isEmpty ||
+          image == null ||
+          !RegExp(
+            r'\bwp-image-\d+\b',
+          ).hasMatch(_attribute(image[0]!, 'class') ?? ''))
+        continue;
+      add(image[0]!, caption);
+    }
+  }
+  return List.unmodifiable(photos);
+}
+
+List<RecipePhoto> _parsePiotPhotos(Uri article, String content) {
+  final photos = <RecipePhoto>[];
+  final seen = <String>{};
+  // These pages each describe one recipe. Gallery photos have wp-image IDs;
+  // emoji, logos and the settings text are outside the image galleries.
+  for (final image in RegExp(
+    r'<img\b[^>]*>',
+    caseSensitive: false,
+  ).allMatches(content)) {
+    final tag = image[0]!;
+    if (!RegExp(r'\bwp-image-\d+\b').hasMatch(_attribute(tag, 'class') ?? ''))
+      continue;
+    final src = _attribute(tag, 'src');
+    if (src == null || src.isEmpty) continue;
+    final url = article.resolve(src);
+    if (!_photoHost(article, url) || !seen.add(_photoKey(url))) continue;
+    photos.add(RecipePhoto(url, 'Piot Recipes 원문 작례 ${photos.length + 1}'));
+    if (photos.length == 100) break;
   }
   return List.unmodifiable(photos);
 }
@@ -149,7 +298,7 @@ class RecipePhotoRepository {
   int _active = 0;
 
   Future<List<RecipePhoto>> load(Uri article) {
-    if (!hasWeeklyPhotos(article)) {
+    if (!hasRecipePhotos(article)) {
       return Future.value(const []);
     }
     final key = article.toString();
@@ -167,9 +316,9 @@ class RecipePhotoRepository {
       _active++;
     }
     try {
-      return parseWeeklyPhotos(
+      return parseRecipePhotos(
         article,
-        await _fetch(weeklyPhotoEndpoint(article)),
+        await _fetch(recipePhotoEndpoint(article)),
       );
     } finally {
       if (_waiting.isNotEmpty) {

@@ -94,6 +94,61 @@ void main() {
     expect(all.last.url.path, '/couch.jpg');
   });
 
+  test(
+    'Film Recipes excludes settings cards and recommendations, including legacy posts',
+    () {
+      final film = Uri.parse(
+        'https://film.recipes/2023/12/27/123-123-year-end-story-mode/',
+      );
+      expect(hasRecipePhotos(film), isTrue);
+      expect(recipePhotoEndpoint(film).path, contains('/sites/film.recipes/'));
+      final modern = parseRecipePhotos(
+        film,
+        document(
+          '<img src="/wp-content/uploads/settings.jpg" alt="123-123 film recipe">'
+          '<img src="/wp-content/uploads/photo.jpg" alt="123-123 film recipe sample photo">'
+          '<img src="https://i0.wp.com/film.recipes/wp-content/uploads/photo.jpg?resize=900" alt="123-123 film recipe sample photo">'
+          '<h2>Similar Recipes</h2><img src="/wp-content/uploads/other.jpg" alt="Other film recipe sample photo">',
+          source: film,
+        ),
+      );
+      expect(modern, hasLength(1));
+      expect(modern.single.url.path, endsWith('photo.jpg'));
+      final legacy = parseRecipePhotos(
+        film,
+        document(
+          '<figure><img class="wp-image-12" src="https://filmrecipes239715696.files.wordpress.com/old.jpg" alt=""><figcaption>Soft Autumn tones</figcaption></figure>'
+          '<h2>Marcel&#8217;s other recipes</h2><figure><img class="wp-image-13" src="/unrelated.jpg"><figcaption>Another recipe</figcaption></figure>',
+          source: film,
+        ),
+      );
+      expect(legacy.single.caption, 'Soft Autumn tones');
+    },
+  );
+
+  test(
+    'Piot uses only owned gallery photos and checks exact article identity',
+    () {
+      final piot = Uri.parse(
+        'https://piotrecipes.wordpress.com/barely-negative-x-trans-iv/',
+      );
+      final all = parseRecipePhotos(
+        piot,
+        document(
+          '<img class="wp-image-1" src="https://piotrecipes.files.wordpress.com/gallery.jpg">'
+          '<img class="wp-image-2" src="https://example.com/foreign.jpg">'
+          '<img src="https://piotrecipes.files.wordpress.com/banner.jpg">',
+          source: piot,
+        ),
+      );
+      expect(all, hasLength(1));
+      expect(
+        () => parseRecipePhotos(piot, document('', source: article)),
+        throwsFormatException,
+      );
+    },
+  );
+
   test('unsupported article sources never make network requests', () async {
     var calls = 0;
     final repo = RecipePhotoRepository(
@@ -248,6 +303,71 @@ void main() {
     },
   );
 
+  testWidgets(
+    'unsupported cards open the original without making a photo request',
+    (tester) async {
+      var requests = 0, opened = 0;
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SizedBox(
+              width: 360,
+              height: 240,
+              child: RecipePhotoThumbnail(
+                article: Uri.parse('https://www.youtube.com/watch?v=sample'),
+                load: (_) async {
+                  requests++;
+                  return samples;
+                },
+                onRetry: () {},
+                onOpenArticle: () => opened++,
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(requests, 0);
+      expect(find.text('영상 원문에서 작례를 확인하세요.'), findsOneWidget);
+      expect(find.text('사진 다시 불러오기'), findsNothing);
+      await tester.tap(find.text('원문 보기'));
+      expect(opened, 1);
+    },
+  );
+
+  testWidgets('supported photo catalog includes Film Recipes by default', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1200, 1200);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final film = BuiltinRecipe(
+      Recipe.fresh(),
+      'Justin Gould',
+      'X-S10',
+      'X-Trans IV',
+      Uri.parse('https://film.recipes/2023/12/27/123-123-year-end-story-mode/'),
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: BuiltinCatalog(
+          onAdd: (_) async {},
+          load: () async => [weekly, film, other],
+          loadPhotos: (_) async => samples,
+          imageBuilder: image,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.byType(RecipePhotoThumbnail), findsNWidgets(2));
+    expect(find.text('사진 © Film Recipes'), findsOneWidget);
+    await tester.tap(find.widgetWithText(FilterChip, 'Fuji X Weekly만'));
+    await tester.pumpAndSettle();
+    expect(find.byType(RecipePhotoThumbnail), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('card retry restores photos and navigation on a phone', (
     tester,
   ) async {
@@ -281,7 +401,7 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    expect(find.text('사진을 불러오지 못했어요.'), findsOneWidget);
+    expect(find.text('원문 연결에 실패했어요.'), findsOneWidget);
     await tester.tap(find.text('사진 다시 불러오기'));
     await tester.pumpAndSettle();
     expect(calls, 2);
@@ -315,7 +435,7 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
-      expect(find.text('사진을 불러오지 못했어요.'), findsOneWidget);
+      expect(find.text('원문 연결에 실패했어요.'), findsOneWidget);
       await tester.ensureVisible(find.text(weekly.recipe.name));
       await tester.tap(find.text(weekly.recipe.name));
       await tester.pumpAndSettle();

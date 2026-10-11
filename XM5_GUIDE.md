@@ -178,3 +178,9 @@ python tool/offline_protocol_check.py --dart /path/to/dart
 - 필름 시뮬레이션 다이얼 C: https://fujifilm-dsc.com/en/manual/x-m5/about_this_camera/parts/index.html
 
 원본의 MIT 라이선스와 서드파티 고지 파일을 유지했습니다. 후지필름 또는 원본 개발자가 배포·검증한 버전은 아닙니다.
+
+### 작례 출처와 아이폰
+
+작례 사진은 Fuji X Weekly, Film Recipes, Piot Recipes의 해당 레시피 원문에서 직접 불러옵니다. 기본 사진 보기는 작례 연결을 지원하는 원문만 표시합니다. 필터를 끄면 전체 540개를 볼 수 있으며, SNS·영상·미지원 출처는 원문 보기로 확인합니다. 원문 연결 실패와 작례 없음은 따로 표시합니다. 사진은 앱에 포함하거나 디스크에 저장하지 않습니다.
+
+아이폰용 FujiSan Pocket은 Safari에서 작례를 넘겨 보고 레시피를 저장할 수 있는 웹 버전입니다. 저장 목록의 JSON을 내려받아 PC 앱의 레시피 가져오기에서 추가합니다. 웹 버전은 카메라 USB 전송을 제공하지 않습니다. iPhone 실기 검증은 별도로 필요합니다.

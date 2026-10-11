@@ -68,7 +68,8 @@ class _BuiltinCatalogState extends State<BuiltinCatalog> {
   int sort = 0;
   bool descending = false;
   late bool photoView = widget.showPhotosInitially;
-  late bool weeklyOnly = widget.showPhotosInitially;
+  bool weeklyOnly = false;
+  late bool photosOnly = widget.showPhotosInitially;
   final photos = RecipePhotoRepository();
 
   Future<List<RecipePhoto>> loadPhotos(Uri uri) =>
@@ -91,6 +92,16 @@ class _BuiltinCatalogState extends State<BuiltinCatalog> {
     }
   }
 
+  Future<void> openArticle(BuiltinRecipe item) async {
+    try {
+      if (!await launchUrl(item.url, mode: LaunchMode.externalApplication)) {
+        notify('원문을 열 수 없습니다: ${item.url}');
+      }
+    } catch (e) {
+      notify('원문을 열 수 없습니다: $e');
+    }
+  }
+
   Future<void> details(BuiltinRecipe item) async {
     final values = item.recipe.values;
     final wanted = await showDialog<bool>(
@@ -98,7 +109,7 @@ class _BuiltinCatalogState extends State<BuiltinCatalog> {
       builder: (ctx) => AlertDialog(
         title: Text(item.recipe.name),
         content: SizedBox(
-          width: hasWeeklyPhotos(item.url) ? 640 : 420,
+          width: hasRecipePhotos(item.url) ? 640 : 420,
           child: SingleChildScrollView(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -108,7 +119,7 @@ class _BuiltinCatalogState extends State<BuiltinCatalog> {
                   style: const TextStyle(fontSize: 12, color: Colors.black54),
                 ),
                 const SizedBox(height: 12),
-                if (hasWeeklyPhotos(item.url))
+                if (hasRecipePhotos(item.url))
                   RecipePhotoGallery(
                     article: item.url,
                     load: loadPhotos,
@@ -140,14 +151,7 @@ class _BuiltinCatalogState extends State<BuiltinCatalog> {
         ),
         actions: [
           TextButton.icon(
-            onPressed: () async {
-              if (!await launchUrl(
-                item.url,
-                mode: LaunchMode.externalApplication,
-              )) {
-                notify('원문을 열 수 없습니다: ${item.url}');
-              }
-            },
+            onPressed: () => openArticle(item),
             icon: const Icon(Icons.open_in_new, size: 16),
             label: const Text('원문 보기'),
           ),
@@ -211,7 +215,8 @@ class _BuiltinCatalogState extends State<BuiltinCatalog> {
 
   bool matches(BuiltinRecipe b, {bool tab = true}) {
     final v = b.recipe.values;
-    return (!weeklyOnly || hasWeeklyPhotos(b.url)) &&
+    return (!photoView || !photosOnly || hasRecipePhotos(b.url)) &&
+        (!weeklyOnly || hasWeeklyPhotos(b.url)) &&
         (!tab || film == null || group(v[0xd192]!) == film) &&
         (dr.isEmpty || dr.contains(drKey(v))) &&
         (cc.isEmpty || cc.contains(v[0xd196])) &&
@@ -291,7 +296,7 @@ class _BuiltinCatalogState extends State<BuiltinCatalog> {
                 selected: photoView,
                 onSelected: (_) => setState(() {
                   photoView = true;
-                  weeklyOnly = true;
+                  photosOnly = true;
                 }),
               ),
               ChoiceChip(
@@ -303,6 +308,12 @@ class _BuiltinCatalogState extends State<BuiltinCatalog> {
                   weeklyOnly = false;
                 }),
               ),
+              if (photoView)
+                FilterChip(
+                  label: const Text('작례 지원 원문만'),
+                  selected: photosOnly,
+                  onSelected: (v) => setState(() => photosOnly = v),
+                ),
               FilterChip(
                 label: const Text('Fuji X Weekly만'),
                 selected: weeklyOnly,
@@ -531,6 +542,7 @@ class _BuiltinCatalogState extends State<BuiltinCatalog> {
               child: RecipePhotoThumbnail(
                 key: ValueKey(item.recipe.id),
                 onRetry: () => photos.retry(item.url),
+                onOpenArticle: () => openArticle(item),
                 article: item.url,
                 load: loadPhotos,
                 imageBuilder: widget.imageBuilder,
@@ -561,8 +573,8 @@ class _BuiltinCatalogState extends State<BuiltinCatalog> {
                     children: [
                       Expanded(
                         child: Text(
-                          hasWeeklyPhotos(item.url)
-                              ? '사진 © Fuji X Weekly'
+                          hasRecipePhotos(item.url)
+                              ? '사진 © ${recipePhotoSource(item.url)}'
                               : item.creator,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
