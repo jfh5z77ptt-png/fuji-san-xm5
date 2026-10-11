@@ -23,7 +23,7 @@ bool hasRecipePhotos(Uri article) =>
                   r'^/\d{4}/\d{2}/\d{2}/[^/]+/?$',
                 ).hasMatch(article.path)) ||
             (article.host == 'piotrecipes.wordpress.com' &&
-                RegExp(r'^/[^/]+-x-trans-iv/?$').hasMatch(article.path))));
+                RegExp(r'^/[^/]+x-trans-iv/?$').hasMatch(article.path))));
 
 String recipePhotoSource(Uri article) => switch (article.host) {
   'fujixweekly.com' => 'Fuji X Weekly',
@@ -114,8 +114,9 @@ String? _attribute(String tag, String name) {
 bool _photoHost(Uri article, Uri url) {
   if (url.scheme != 'https' ||
       url.userInfo.isNotEmpty ||
-      (url.hasPort && url.port != 443))
+      (url.hasPort && url.port != 443)) {
     return false;
+  }
   final hosts = switch (article.host) {
     'fujixweekly.com' => {'fujixweekly.com', 'fujixweekly.files.wordpress.com'},
     'film.recipes' => {
@@ -232,8 +233,9 @@ List<RecipePhoto> _parseFilmPhotos(Uri article, String content) {
     if (RegExp(
       r'\bfilm recipe (?:sample photo|photo by\b)',
       caseSensitive: false,
-    ).hasMatch(caption))
+    ).hasMatch(caption)) {
       add(tag, caption);
+    }
   }
   // Older posts use empty alt text and descriptive figure captions.
   if (photos.isEmpty) {
@@ -259,8 +261,9 @@ List<RecipePhoto> _parseFilmPhotos(Uri article, String content) {
           image == null ||
           !RegExp(
             r'\bwp-image-\d+\b',
-          ).hasMatch(_attribute(image[0]!, 'class') ?? ''))
+          ).hasMatch(_attribute(image[0]!, 'class') ?? '')) {
         continue;
+      }
       add(image[0]!, caption);
     }
   }
@@ -277,8 +280,9 @@ List<RecipePhoto> _parsePiotPhotos(Uri article, String content) {
     caseSensitive: false,
   ).allMatches(content)) {
     final tag = image[0]!;
-    if (!RegExp(r'\bwp-image-\d+\b').hasMatch(_attribute(tag, 'class') ?? ''))
+    if (!RegExp(r'\bwp-image-\d+\b').hasMatch(_attribute(tag, 'class') ?? '')) {
       continue;
+    }
     final src = _attribute(tag, 'src');
     if (src == null || src.isEmpty) continue;
     final url = article.resolve(src);
