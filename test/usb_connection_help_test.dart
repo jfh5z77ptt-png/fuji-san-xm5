@@ -11,8 +11,6 @@ void main() {
   testWidgets('iPhone USB guide fits a phone and never opens a camera', (
     tester,
   ) async {
-    debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
-    addTearDown(() => debugDefaultTargetPlatformOverride = null);
     tester.view.physicalSize = const Size(390, 844);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.resetPhysicalSize);
@@ -39,7 +37,7 @@ void main() {
     await tester.tap(find.text('닫기'));
     await tester.pumpAndSettle();
     expect(calls, isEmpty);
-  });
+  }, variant: TargetPlatformVariant.only(TargetPlatform.iOS));
 
   test('instructions describe permissions for the current platform', () {
     expect(
