@@ -33,17 +33,17 @@ String recipePhotoSource(Uri article) => switch (article.host) {
 };
 
 String unsupportedPhotoMessage(Uri article) {
-  if (article.host == 'www.youtube.com') return '영상 원문에서 작례를 확인하세요.';
+  if (article.host == 'www.youtube.com') return '영상 원문에서 샘플 사진을 확인하세요.';
   if (article.host == 'www.facebook.com' ||
       article.host == 'www.instagram.com') {
-    return 'SNS 원문에서 작례를 확인하세요.';
+    return 'SNS 원문에서 샘플 사진을 확인하세요.';
   }
   return '이 출처의 사진은 원문에서 확인하세요.';
 }
 
 Uri recipePhotoEndpoint(Uri article) {
   if (!hasRecipePhotos(article)) {
-    throw const FormatException('이 원문은 작례 사진 연결을 지원하지 않습니다.');
+    throw const FormatException('이 원문은 샘플 사진 연결을 지원하지 않습니다.');
   }
   final slug = article.pathSegments.where((s) => s.isNotEmpty).last;
   return Uri.https(
@@ -287,7 +287,7 @@ List<RecipePhoto> _parsePiotPhotos(Uri article, String content) {
     if (src == null || src.isEmpty) continue;
     final url = article.resolve(src);
     if (!_photoHost(article, url) || !seen.add(_photoKey(url))) continue;
-    photos.add(RecipePhoto(url, 'Piot Recipes 원문 작례 ${photos.length + 1}'));
+    photos.add(RecipePhoto(url, 'Piot Recipes 원문 샘플 사진 ${photos.length + 1}'));
     if (photos.length == 100) break;
   }
   return List.unmodifiable(photos);

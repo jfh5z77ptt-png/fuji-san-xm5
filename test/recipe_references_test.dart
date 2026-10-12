@@ -276,7 +276,7 @@ void main() {
       expect(find.byType(RecipePhotoThumbnail), findsOneWidget);
       expect(find.byType(ListTile), findsNothing);
       expect(find.text('1 / 2'), findsOneWidget);
-      await tester.tap(find.byTooltip('카드 다음 작례'));
+      await tester.tap(find.byTooltip('카드 다음 샘플 사진'));
       await tester.pumpAndSettle();
       expect(find.text('2 / 2'), findsOneWidget);
       expect(find.byType(Dialog), findsNothing);
@@ -288,10 +288,10 @@ void main() {
       expect(find.text('1 / 2'), findsOneWidget);
       await tester.tap(find.text(weekly.recipe.name).first);
       await tester.pumpAndSettle();
-      expect(find.text('작례 1 / 2'), findsOneWidget);
-      await tester.tap(find.byTooltip('다음 작례'));
+      expect(find.text('샘플 사진 1 / 2'), findsOneWidget);
+      await tester.tap(find.byTooltip('다음 샘플 사진'));
       await tester.pumpAndSettle();
-      expect(find.text('작례 2 / 2'), findsOneWidget);
+      expect(find.text('샘플 사진 2 / 2'), findsOneWidget);
       expect(find.text('원문 보기'), findsOneWidget);
       await tester.tap(find.widgetWithText(FilledButton, '라이브러리에 추가'));
       await tester.pumpAndSettle();
@@ -328,7 +328,7 @@ void main() {
       );
       await tester.pumpAndSettle();
       expect(requests, 0);
-      expect(find.text('영상 원문에서 작례를 확인하세요.'), findsOneWidget);
+      expect(find.text('영상 원문에서 샘플 사진을 확인하세요.'), findsOneWidget);
       expect(find.text('사진 다시 불러오기'), findsNothing);
       await tester.tap(find.text('원문 보기'));
       expect(opened, 1);
@@ -410,7 +410,7 @@ void main() {
     await tester.drag(find.byType(PageView), const Offset(-300, 0));
     await tester.pumpAndSettle();
     expect(find.text('2 / 2'), findsOneWidget);
-    await tester.tap(find.byTooltip('카드 이전 작례'));
+    await tester.tap(find.byTooltip('카드 이전 샘플 사진'));
     await tester.pumpAndSettle();
     expect(find.text('1 / 2'), findsOneWidget);
     expect(tester.takeException(), isNull);

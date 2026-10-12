@@ -20,6 +20,7 @@ import 'builtin_recipes.dart';
 import 'film_icon.dart';
 import 'diagnostic_log.dart';
 import 'error_reporting.dart';
+import 'usb_connection_help.dart';
 
 import 'package:url_launcher/url_launcher.dart';
 
@@ -451,7 +452,7 @@ class _WorkspaceState extends State<Workspace> {
       final devices = await transport.discover();
       if (devices.isEmpty) {
         throw StateError(
-          '카메라를 찾지 못했습니다. 데이터 케이블과 USB RAW CONV./BACKUP RESTORE 설정을 확인하세요. Windows 기본 WPD 드라이버를 지원합니다.',
+          '카메라를 찾지 못했습니다.\n\n${usbConnectionInstructions(defaultTargetPlatform)}',
         );
       }
       if (!mounted) return;
@@ -826,6 +827,11 @@ class _WorkspaceState extends State<Workspace> {
           ),
         ),
         actions: [
+          IconButton(
+            tooltip: 'USB 연결 안내',
+            onPressed: busy ? null : () => showUsbConnectionHelp(context),
+            icon: const Icon(Icons.help_outline),
+          ),
           if (update != null)
             IconButton(
               tooltip: '${update!.tag} 업데이트',
@@ -999,8 +1005,8 @@ class _WorkspaceState extends State<Workspace> {
       const SizedBox(height: 20),
       const Text('연결 안내', style: TextStyle(fontWeight: FontWeight.bold)),
       const SizedBox(height: 12),
-      const Text(
-        '카메라 USB 모드\nUSB RAW CONV./BACKUP RESTORE\n\n데이터 전송 케이블을 사용하고 X RAW STUDIO 등 다른 카메라 앱은 종료하세요.\n\nWindows: 기본 WPD 드라이버 지원\nAndroid: USB 접근 허용\nApple: 카메라 접근 허용',
+      Text(
+        usbConnectionInstructions(defaultTargetPlatform),
         style: TextStyle(fontSize: 12, height: 1.8),
       ),
       const SizedBox(height: 24),

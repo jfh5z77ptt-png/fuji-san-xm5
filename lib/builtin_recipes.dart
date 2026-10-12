@@ -142,7 +142,7 @@ class _BuiltinCatalogState extends State<BuiltinCatalog> {
                     ),
                 const SizedBox(height: 12),
                 Text(
-                  '${item.sensor}용으로 공개된 설정값입니다. 촬영 기종에 따라 결과가 다를 수 있어요. 노출 보정·ISO 권장값과 전체 작례는 원문에서 확인하세요.',
+                  '${item.sensor}용으로 공개된 설정값입니다. 촬영 기종에 따라 결과가 다를 수 있어요. 노출 보정·ISO 권장값과 전체 샘플 사진는 원문에서 확인하세요.',
                   style: const TextStyle(fontSize: 12, color: Colors.black54),
                 ),
               ],
@@ -292,7 +292,7 @@ class _BuiltinCatalogState extends State<BuiltinCatalog> {
             children: [
               ChoiceChip(
                 avatar: const Icon(Icons.photo_library_outlined, size: 18),
-                label: const Text('작례 사진'),
+                label: const Text('샘플 사진'),
                 selected: photoView,
                 onSelected: (_) => setState(() {
                   photoView = true;
@@ -310,7 +310,7 @@ class _BuiltinCatalogState extends State<BuiltinCatalog> {
               ),
               if (photoView)
                 FilterChip(
-                  label: const Text('작례 지원 원문만'),
+                  label: const Text('샘플 사진 지원 원문만'),
                   selected: photosOnly,
                   onSelected: (v) => setState(() => photosOnly = v),
                 ),
@@ -376,7 +376,7 @@ class _BuiltinCatalogState extends State<BuiltinCatalog> {
             ],
           ),
           Text(
-            '$shown개 · ${photoView ? '카드의 화살표나 좌우 드래그로 작례를 넘겨 보세요. 사진을 누르면 설정을 확인할 수 있어요. 사진은 인터넷으로 원문에서 불러옵니다. ' : '눌러서 설정과 원문을 확인하고 라이브러리에 추가하세요. '}'
+            '$shown개 · ${photoView ? '카드의 화살표나 좌우 드래그로 샘플 사진을 넘겨 보세요. 사진을 누르면 설정을 확인할 수 있어요. 사진은 인터넷으로 원문에서 불러옵니다. ' : '눌러서 설정과 원문을 확인하고 라이브러리에 추가하세요. '}'
             '목록 출처: Fujifilm Film Simulation Recipes Database (Henri-Pierre Chavaz)',
             style: const TextStyle(fontSize: 12, color: Colors.black54),
           ),

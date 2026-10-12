@@ -104,7 +104,7 @@ class _RecipePhotoThumbnailState extends State<RecipePhotoThumbnail> {
                       ? unsupportedPhotoMessage(widget.article)
                       : snapshot.hasError
                       ? '원문 연결에 실패했어요.'
-                      : '이 원문에서 작례 사진을 찾지 못했어요.',
+                      : '이 원문에서 샘플 사진을 찾지 못했어요.',
                   textAlign: TextAlign.center,
                   style: const TextStyle(color: Colors.black54),
                 ),
@@ -150,7 +150,7 @@ class _RecipePhotoThumbnailState extends State<RecipePhotoThumbnail> {
               Align(
                 alignment: Alignment.centerLeft,
                 child: IconButton.filledTonal(
-                  tooltip: '카드 이전 작례',
+                  tooltip: '카드 이전 샘플 사진',
                   onPressed: index == 0
                       ? null
                       : () => pages.previousPage(
@@ -163,7 +163,7 @@ class _RecipePhotoThumbnailState extends State<RecipePhotoThumbnail> {
               Align(
                 alignment: Alignment.centerRight,
                 child: IconButton.filledTonal(
-                  tooltip: '카드 다음 작례',
+                  tooltip: '카드 다음 샘플 사진',
                   onPressed: index == all.length - 1
                       ? null
                       : () => pages.nextPage(
@@ -283,7 +283,7 @@ class _RecipePhotoGalleryState extends State<RecipePhotoGallery> {
               Text(
                 snapshot.hasError
                     ? '원문 연결에 실패했어요. 원문 보기로 확인할 수 있어요.'
-                    : '이 원문에서 작례 사진을 찾지 못했어요. 원문 보기로 확인할 수 있어요.',
+                    : '이 원문에서 샘플 사진을 찾지 못했어요. 원문 보기로 확인할 수 있어요.',
               ),
               TextButton.icon(
                 onPressed: () {
@@ -321,7 +321,7 @@ class _RecipePhotoGalleryState extends State<RecipePhotoGallery> {
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
               IconButton(
-                tooltip: '이전 작례',
+                tooltip: '이전 샘플 사진',
                 onPressed: index == 0
                     ? null
                     : () => pages.previousPage(
@@ -330,9 +330,9 @@ class _RecipePhotoGalleryState extends State<RecipePhotoGallery> {
                       ),
                 icon: const Icon(Icons.chevron_left),
               ),
-              Text('작례 ${index + 1} / ${all.length}'),
+              Text('샘플 사진 ${index + 1} / ${all.length}'),
               IconButton(
-                tooltip: '다음 작례',
+                tooltip: '다음 샘플 사진',
                 onPressed: index == all.length - 1
                     ? null
                     : () => pages.nextPage(
@@ -342,7 +342,7 @@ class _RecipePhotoGalleryState extends State<RecipePhotoGallery> {
                 icon: const Icon(Icons.chevron_right),
               ),
               IconButton(
-                tooltip: '작례 크게 보기',
+                tooltip: '샘플 사진 크게 보기',
                 onPressed: () => enlarge(all[index]),
                 icon: const Icon(Icons.zoom_in),
               ),
@@ -351,7 +351,7 @@ class _RecipePhotoGalleryState extends State<RecipePhotoGallery> {
           Text(all[index].caption, style: const TextStyle(fontSize: 12)),
           const SizedBox(height: 6),
           Text(
-            '사진 © ${recipePhotoSource(widget.article)} · 원문 저자\n원문의 작례입니다. 촬영 조건과 기종에 따라 결과는 달라질 수 있어요.',
+            '사진 © ${recipePhotoSource(widget.article)} · 원문 저자\n원문의 샘플 사진입니다. 촬영 조건과 기종에 따라 결과는 달라질 수 있어요.',
             style: const TextStyle(fontSize: 12, color: Colors.black54),
           ),
           const SizedBox(height: 16),

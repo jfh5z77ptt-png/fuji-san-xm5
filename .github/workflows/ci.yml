@@ -53,7 +53,9 @@ jobs:
           - os: macos-15
             target: ios
             command: flutter build ios --release --no-codesign --dart-define=FUJI_DEFAULT_MODEL=X-M5
-            artifact: fuji-san-ios-unsigned.tar.gz
+            artifact: |
+              fuji-san-ios-unsigned.tar.gz
+              FujiSan-XM5-XT5-iOS-unsigned.ipa
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -87,6 +89,7 @@ jobs:
             tar -czf fuji-san-macos.tar.gz -C build/macos/Build/Products/Release fuji_san.app
           else
             tar -czf fuji-san-ios-unsigned.tar.gz -C build/ios/iphoneos Runner.app
+            python3 tool/package_ios.py
           fi
       - uses: actions/upload-artifact@v4
         with:

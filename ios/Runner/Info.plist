@@ -3,7 +3,7 @@
 <plist version="1.0">
 <dict>
     <key>NSCameraUsageDescription</key>
-    <string>Read and write recipe settings on your USB-connected Fujifilm camera.</string>
+    <string>USB 케이블로 연결한 후지필름 카메라의 레시피 설정을 읽고 저장합니다.</string>
 	<key>CADisableMinimumFrameDurationOnPhone</key>
 	<true/>
 	<key>CFBundleDevelopmentRegion</key>

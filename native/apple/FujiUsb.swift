@@ -32,7 +32,7 @@ final class FujiUsb: NSObject, ICDeviceBrowserDelegate, ICDeviceDelegate {
             browser.requestControlAuthorization { status in
                 DispatchQueue.main.async {
                     guard status == .authorized else {
-                        result(FlutterError(code: "permission", message: "Allow camera control access in Settings.", details: nil)); return
+                        result(FlutterError(code: "permission", message: "설정에서 FujiSan의 카메라 제어 접근을 허용한 뒤 다시 연결하세요.", details: nil)); return
                     }
                     self.discover(result)
                 }
@@ -55,9 +55,14 @@ final class FujiUsb: NSObject, ICDeviceBrowserDelegate, ICDeviceDelegate {
                 finish(FlutterError(code: "timeout", message: "Camera session timed out. Reconnect USB.", details: nil))
             }
         case "disconnect":
+            openingID = UUID()
             requestID = UUID()
-            pending?(FlutterError(code: "disconnected", message: "Camera disconnected", details: nil)); pending = nil
-            selected?.requestCloseSession(); selected = nil
+            let camera = selected; selected = nil
+            let wasOpening = opening; opening = nil
+            let wasPending = pending; pending = nil
+            let error = FlutterError(code: "disconnected", message: "USB 카메라 연결이 해제됐습니다.", details: nil)
+            wasOpening?(error); wasPending?(error)
+            camera?.requestCloseSession()
             result(nil)
         case "transaction":
             guard pending == nil, let camera = selected, camera.hasOpenSession,
@@ -106,7 +111,8 @@ final class FujiUsb: NSObject, ICDeviceBrowserDelegate, ICDeviceDelegate {
         if selected === device { selected = nil }
     }
     func didRemove(_ device: ICDevice) {
-        selected = nil; requestID = UUID()
+        guard selected === device else { return }
+        selected = nil; openingID = UUID(); requestID = UUID()
         let error = FlutterError(code: "disconnected", message: "USB camera removed", details: nil)
         opening?(error); opening = nil; pending?(error); pending = nil
     }
