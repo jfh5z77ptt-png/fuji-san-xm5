@@ -18,7 +18,7 @@ String usbConnectionInstructions(TargetPlatform platform) {
   return '1. 카메라 연결 모드를 USB RAW CONV./BACKUP RESTORE로 설정하세요.\n\n'
       '2. $cable\n\n'
       '3. $permission\n\n'
-      '4. FujiSan의 카메라 연결을 누르고 검색된 카메라를 선택하세요.\n\n'
+      '4. FujiSan의 카메라 연결을 누르세요. 한 대면 자동 선택하고, 여러 대면 연결할 기기를 선택합니다. 기종·펌웨어 확인 → 설정 조회 검사 → 원본 슬롯 백업 → 백업 파일 저장이 자동으로 진행됩니다. 준비 완료 표시 후 적용하세요.\n\n'
       'USB 전송에는 Wi-Fi·Bluetooth 페어링이 필요하지 않습니다. 다른 카메라 프로그램이 연결을 사용하고 있다면 종료하세요.';
 }
 
@@ -41,7 +41,7 @@ Future<void> showUsbConnectionHelp(BuildContext context) => showDialog<void>(
           const Text(
             '내장 레시피에서 샘플 사진을 보고 라이브러리에 추가하세요. '
             'C 슬롯 화면에서 레시피를 배치하고 적용할 슬롯을 선택한 뒤 일괄 적용을 누르세요. '
-            '기존 설정을 백업한 후 전송하고 카메라 값을 다시 읽어 확인합니다.\n\n'
+            '연결 없이 레시피를 탐색·배치할 수 있습니다. 연결 없이 적용을 누르면 먼저 연결하도록 안내합니다. 전송 직전에 연결과 설정 범위를 다시 확인하고 기존 설정을 새로 백업한 후 전송하고 카메라 값을 다시 읽어 확인합니다.\n\n'
             'X-M5는 C1–C4, X-T5는 C1–C7입니다. 아이폰 실기 전송은 아직 검증되지 않았습니다.',
           ),
         ],

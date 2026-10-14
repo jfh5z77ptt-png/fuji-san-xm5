@@ -136,6 +136,49 @@ class FujiCamera implements RecipeCamera {
     if (identity == null) throw StateError('카메라 모델을 먼저 확인하세요.');
   }
 
+  // Read and validate access before selecting any bank or changing recipes.
+  Future<void> validateAccess() async {
+    _ready();
+    final selector = await read(0xd18c);
+    if (selector.length != 2) {
+      throw const FormatException('카메라 슬롯 선택값 길이가 올바르지 않습니다.');
+    }
+    profile.validateSlots([Reader(selector).read16()]);
+    await _validateDescriptor(0xd18c, selector);
+    final name = await read(0xd18d);
+    await _validateDescriptor(0xd18d, name);
+    for (final s in settings) {
+      final bytes = await read(s.id);
+      if (bytes.length != 2) {
+        throw FormatException('${s.label} 조회값 길이가 올바르지 않습니다.');
+      }
+      // Grain Off has separate read and write representations.
+      final value = s.id == 0xd195 && Reader(bytes).read16() == 6
+          ? u16(1)
+          : bytes;
+      await _validateDescriptor(s.id, value);
+    }
+    DiagnosticLog.instance.add(
+      'camera',
+      _knownSchemaOnly
+          ? 'access validated with bounded model schema'
+          : 'access validated with camera descriptors',
+    );
+  }
+
+  // Reject an incompatible plan before any bank selection or recipe write.
+  Future<void> validatePlan(Map<int, Recipe> plan) async {
+    _ready();
+    profile.validateSlots(plan.keys);
+    for (final entry in plan.entries) {
+      await _validateDescriptor(0xd18c, u16(entry.key));
+      for (final value in entry.value.writeValues.entries) {
+        await _validateDescriptor(value.key, u16(value.value));
+      }
+      await _validateDescriptor(0xd18d, ptpString(entry.value.cameraName));
+    }
+  }
+
   // No SetDevicePropValue or bank selection: suitable for an unknown firmware.
   Future<Map<String, dynamic>> probeCapabilities() async {
     _ready();
@@ -308,6 +351,7 @@ class FujiCamera implements RecipeCamera {
     final original = await read(0xd18c);
     final result = <Snapshot>[];
     if (xm5Firmware120) _validateKnownValue(0xd18c, original);
+    Object? readFailure;
     try {
       for (final slot in slots.toList()..sort()) {
         await select(slot);
@@ -327,10 +371,20 @@ class FujiCamera implements RecipeCamera {
         }
         result.add(Snapshot(slot, p));
       }
+    } catch (error) {
+      readFailure = error;
+      rethrow;
     } finally {
-      await set(0xd18c, original);
-      if (!_same(await read(0xd18c), original)) {
-        throw StateError('원래 C 슬롯을 복원하지 못했습니다. 카메라에서 확인하세요.');
+      try {
+        await set(0xd18c, original);
+        if (!_same(await read(0xd18c), original)) {
+          throw StateError('원래 C 슬롯을 복원하지 못했습니다. 카메라에서 확인하세요.');
+        }
+      } catch (error) {
+        DiagnosticLog.instance.add('restore-error', '원래 C 슬롯 선택 복원 실패: $error');
+        // Preserve the first failure for diagnosis; never replace a transport
+        // failure with the secondary error from restoring the selector.
+        if (readFailure == null) rethrow;
       }
     }
     return result;
@@ -360,7 +414,7 @@ class FujiCamera implements RecipeCamera {
         _knownSchemaOnly = true;
         return;
       }
-      rethrow;
+      throw PtpResponseException(e.code, e.operation, property: id);
     }
     final r = Reader(descriptor);
     if (r.read16() != id) {
@@ -449,6 +503,7 @@ class FujiCamera implements RecipeCamera {
     if (profile.experimental) await _validateDescriptor(0xd18c, u16(slot));
     final original = await read(0xd18c);
     if (xm5Firmware120) _validateKnownValue(0xd18c, original);
+    Object? writeFailure;
     try {
       await select(slot);
       // Check every value before the first recipe write. A late unsupported
@@ -481,10 +536,18 @@ class FujiCamera implements RecipeCamera {
           );
         }
       }
+    } catch (error) {
+      writeFailure = error;
+      rethrow;
     } finally {
-      await set(0xd18c, original);
-      if (!_equal(await read(0xd18c), original)) {
-        throw StateError('원래 C 슬롯 복원 실패. 카메라에서 확인하세요.');
+      try {
+        await set(0xd18c, original);
+        if (!_equal(await read(0xd18c), original)) {
+          throw StateError('원래 C 슬롯 복원 실패. 카메라에서 확인하세요.');
+        }
+      } catch (error) {
+        DiagnosticLog.instance.add('restore-error', '원래 C 슬롯 선택 복원 실패: $error');
+        if (writeFailure == null) rethrow;
       }
     }
   }
@@ -645,6 +708,9 @@ class BatchWriter {
       throw ArgumentError('슬롯 C1~C7을 선택하세요.');
     }
     _running = true;
+    var stage = '원본 슬롯 조회';
+    var backupSaved = false;
+    var writeAttempted = false;
     try {
       report('원본 슬롯 백업 중');
       final backup = await camera.backup(plan.keys.toSet());
@@ -657,16 +723,42 @@ class BatchWriter {
               .isNotEmpty) {
         throw StateError('백업이 완전하지 않습니다.');
       }
+      stage = '백업 파일 저장';
+      report('원본 백업 파일 저장 중');
       await persist(
         backup,
       ); // A durable backup is required before any recipe write.
+      backupSaved = true;
       for (final slot in plan.keys.toList()..sort()) {
+        stage = 'C$slot 쓰기 및 검증';
         report('C$slot 쓰기 및 검증 중');
+        writeAttempted = true;
         await camera.write(slot, plan[slot]!);
         report('C$slot 검증 완료');
       }
+    } catch (error, stack) {
+      Error.throwWithStackTrace(
+        BatchApplyFailure(error, stage, backupSaved, writeAttempted),
+        stack,
+      );
     } finally {
       _running = false;
     }
   }
+}
+
+class BatchApplyFailure extends StateError {
+  BatchApplyFailure(
+    this.cause,
+    this.stage,
+    this.backupSaved,
+    this.writeAttempted,
+  ) : super(
+        writeAttempted
+            ? '$stage 단계에서 중단했습니다. 일부 설정이 적용되었을 수 있습니다. 원본 백업은 저장되어 있습니다. 연결을 다시 확인한 뒤 백업 메뉴에서 복원할 수 있습니다. $cause'
+            : '$stage 단계에서 중단했습니다. 레시피 설정 쓰기는 시작하지 않았습니다. $cause',
+      );
+  final Object cause;
+  final String stage;
+  final bool backupSaved, writeAttempted;
 }

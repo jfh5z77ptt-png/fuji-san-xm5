@@ -1,10 +1,12 @@
 import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:fuji_san/main.dart';
 import 'package:fuji_san/camera/camera.dart';
 import 'package:fuji_san/camera/ptp.dart';
 import 'package:fuji_san/domain/recipe.dart';
+
 import 'ui_test.dart' show MemoryStore;
 import 'write_verify_test.dart' show CameraFixture;
 
@@ -101,15 +103,9 @@ void main() {
       await tester.pumpWidget(FujiSanApp(store: store));
       await tester.pumpAndSettle();
       await tester.tap(find.text('카메라 연결'));
-      await tester.pump(const Duration(milliseconds: 300));
-      await tester.pump(const Duration(milliseconds: 300));
-      await tester.tap(
-        find.descendant(
-          of: find.byType(SimpleDialogOption),
-          matching: find.text('X100VI'),
-        ),
-      );
       await tester.pumpAndSettle();
+      expect(store.backupsSaved, 1);
+      expect(find.text('X100VI 준비 완료'), findsOneWidget);
       await tester.tap(find.text('Original 1'));
       await tester.pumpAndSettle();
       expect(find.text('C1 레시피 편집'), findsOneWidget);
@@ -119,7 +115,7 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.text('C1 레시피 편집'), findsNothing);
       expect(find.text('New Name'), findsOneWidget);
-      expect(store.backupsSaved, 1);
+      expect(store.backupsSaved, 2);
       expect(fixture.written, [0xd18d]);
       expect(fixture.selected, 4);
       await tester.tap(find.byTooltip('다른 레시피로 교체').first);
@@ -149,6 +145,7 @@ void main() {
       );
       expect(Reader(fixture.slots[1]![0xd190]!).read16(), 65535);
       expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox());
     },
   );
 }

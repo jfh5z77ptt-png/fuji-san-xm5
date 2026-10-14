@@ -1,10 +1,13 @@
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+
 import 'diagnostic_log.dart';
 import 'updates.dart';
+import 'camera_diagnosis.dart';
 
 const reportEndpoint = 'https://reikop.io/fuji-san/report.php';
 
@@ -28,6 +31,9 @@ class ErrorReport {
       'osVersion': source.redact(Platform.operatingSystemVersion, max: 100),
       'locale': Platform.localeName,
       'context': source.redact(context, max: 75),
+      'diagnosis': diagnoseCameraFailure(error, context).toJson().map(
+        (key, value) => MapEntry(key, source.redact(value, max: 2000)),
+      ),
       'error': source.redact('$error', max: 2000),
       'stack': source.redact('$stack', max: 6000),
       'camera': Map<String, String>.from(source.camera),
@@ -174,6 +180,22 @@ class _ErrorReportDialogState extends State<ErrorReportDialog> {
                       style: const TextStyle(fontWeight: FontWeight.bold),
                     ),
                     const SizedBox(height: 8),
+                    if (widget.report.data['diagnosis']
+                        case final Map diagnosis) ...[
+                      Text(
+                        diagnosis['title'] as String,
+                        style: const TextStyle(fontWeight: FontWeight.bold),
+                      ),
+                      const SizedBox(height: 8),
+                      Text(diagnosis['detail'] as String),
+                      const SizedBox(height: 8),
+                      Text(diagnosis['action'] as String),
+                      const SizedBox(height: 16),
+                      const Text(
+                        '상세 오류',
+                        style: TextStyle(fontWeight: FontWeight.bold),
+                      ),
+                    ],
                     Text(
                       widget.report.data['error'] as String,
                       maxLines: 5,

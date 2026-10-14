@@ -1,11 +1,13 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+
 import 'package:crypto/crypto.dart';
 import 'package:flutter/services.dart';
+
 import 'storage.dart';
 
-const appRelease = '0.3.0-alpha.1';
+const appRelease = '0.3.0-alpha.2';
 const releasesUrl = 'https://github.com/reikop/fuji-san/releases';
 
 class ReleaseVersion implements Comparable<ReleaseVersion> {

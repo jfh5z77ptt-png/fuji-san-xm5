@@ -134,9 +134,14 @@ class _WorkspaceState extends State<Workspace> {
   bool get hasVisibleAssignments => slots.keys.any((slot) => slot <= slotCount);
   String get slotLabel => activeModel.slotLabel;
   DateTime? slotsReadAt;
+  bool cameraReady = false;
+  String? connectedDeviceId;
+  CameraIdentity? connectedIdentity;
+  Timer? connectionTimer;
+  String? connectionProblem;
   AppRelease? update;
   bool checkingUpdate = false;
-  String updateStatus = 'X-M5 / X-T5 수정판 · 자동 업데이트 중지';
+  String updateStatus = '연결 준비 자동화 수정판 · 0.3.0-alpha.2';
   Timer? updateTimer;
   bool busy = true, loaded = false;
   String status = '라이브러리를 여는 중', query = '';
@@ -153,6 +158,7 @@ class _WorkspaceState extends State<Workspace> {
 
   @override
   void dispose() {
+    connectionTimer?.cancel();
     updateTimer?.cancel();
     dragScroll?.cancel();
     libraryScroll.dispose();
@@ -216,6 +222,65 @@ class _WorkspaceState extends State<Workspace> {
     report('카메라 $slotLabel 읽기 완료 · 원래 슬롯 복원됨');
   }
 
+  void clearCamera() {
+    connectionTimer?.cancel();
+    cameraReady = false;
+    camera.identity = null;
+    connectedIdentity = null;
+    cameraSlots = {};
+    slotsReadAt = null;
+  }
+
+  Future<void> verifyConnectedCamera() async {
+    final expected = connectedIdentity;
+    if (!transport.opened || expected == null) {
+      throw StateError('카메라 연결 준비가 완료되지 않았습니다. 먼저 카메라를 연결하세요.');
+    }
+    report('카메라 연결 상태와 기기 확인 중');
+    try {
+      await camera.inspect();
+    } on PlatformException {
+      // This is a read-only check before any setting is sent. Retry once by
+      // reopening the same device; never repeat an interrupted write.
+      final id = connectedDeviceId;
+      if (id == null) rethrow;
+      report('USB 연결을 다시 여는 중');
+      await transport.close();
+      await transport.open(id);
+      await camera.inspect();
+    }
+    final actual = camera.identity!;
+    if (actual.model != expected.model ||
+        actual.serial != expected.serial ||
+        actual.firmware != expected.firmware) {
+      cameraReady = false;
+      throw StateError(
+        '연결한 기기 또는 펌웨어가 바뀌었습니다. 카메라 연결을 다시 눌러 새 기기의 준비와 백업을 완료하세요.',
+      );
+    }
+    report('설정 조회 호환성 확인 중');
+    await camera.validateAccess();
+  }
+
+  void watchConnection() {
+    connectionTimer?.cancel();
+    connectionTimer = Timer.periodic(const Duration(seconds: 30), (_) async {
+      if (!mounted || busy || !cameraReady || !transport.opened) return;
+      setState(() => busy = true);
+      try {
+        // Read only; keeps the session responsive without selecting a slot.
+        await camera.read(0xd18c);
+      } catch (error) {
+        clearCamera();
+        connectionProblem =
+            '카메라 연결 확인에 실패했습니다. 카메라 연결을 다시 눌러 주세요. 상세 오류: $error';
+        report('카메라 연결 확인 실패 · 다시 연결하세요');
+      } finally {
+        if (mounted) setState(() => busy = false);
+      }
+    });
+  }
+
   Future<void> showCameraSlot(int slot) async {
     final snapshot = cameraSlots[slot]!;
     setState(() => busy = true);
@@ -226,6 +291,7 @@ class _WorkspaceState extends State<Workspace> {
             snapshot: snapshot,
             onSave: (edit) async {
               try {
+                await verifyConnectedCamera();
                 await camera.editSlot(
                   snapshot,
                   edit,
@@ -302,9 +368,7 @@ class _WorkspaceState extends State<Workspace> {
       final failure = ErrorReport.capture(e, stack, status);
       report('완료하지 못했습니다: $e');
       if (!transport.opened) {
-        camera.identity = null;
-        cameraSlots = {};
-        slotsReadAt = null;
+        clearCamera();
       }
       if (mounted) {
         setState(() => busy = false);
@@ -440,15 +504,17 @@ class _WorkspaceState extends State<Workspace> {
 
   Future<void> connect() async {
     await run(() async {
-      if (transport.opened) {
+      if (transport.opened && cameraReady) {
         await transport.close();
-        camera.identity = null;
-        cameraSlots = {};
-        slotsReadAt = null;
+        clearCamera();
+        connectionProblem = null;
         report('카메라 연결 해제');
         return;
       }
-      report('USB 카메라 검색 중');
+      clearCamera();
+      connectionProblem = null;
+      if (transport.opened) await transport.close();
+      report('1/5 USB 카메라 검색 중');
       final devices = await transport.discover();
       if (devices.isEmpty) {
         throw StateError(
@@ -456,37 +522,54 @@ class _WorkspaceState extends State<Workspace> {
         );
       }
       if (!mounted) return;
-      final selected = await showDialog<Map<String, dynamic>>(
-        context: context,
-        builder: (ctx) => SimpleDialog(
-          title: const Text('연결할 카메라'),
-          children: devices
-              .map(
-                (d) => SimpleDialogOption(
-                  onPressed: () => Navigator.pop(ctx, d),
-                  child: Text(d['name'] as String? ?? 'FUJIFILM'),
-                ),
-              )
-              .toList(),
-        ),
-      );
+      final selected = devices.length == 1
+          ? devices.single
+          : await showDialog<Map<String, dynamic>>(
+              context: context,
+              builder: (ctx) => SimpleDialog(
+                title: const Text('연결할 카메라'),
+                children: devices
+                    .map(
+                      (d) => SimpleDialogOption(
+                        onPressed: () => Navigator.pop(ctx, d),
+                        child: Text(d['name'] as String? ?? 'FUJIFILM'),
+                      ),
+                    )
+                    .toList(),
+              ),
+            );
       if (selected == null) {
         report('카메라 선택 취소');
         return;
       }
       try {
-        await transport.open(selected['id'] as String);
+        connectedDeviceId = selected['id'] as String;
+        report('2/5 USB 연결과 기종·펌웨어 확인 중');
+        await transport.open(connectedDeviceId!);
         await camera.inspect();
         preferredModel = camera.profile;
+        connectedIdentity = camera.identity;
+        report('3/5 설정 조회 호환성 확인 중');
+        await camera.validateAccess();
+        report('4/5 원본 슬롯 자동 백업을 읽는 중');
+        final snapshots = await camera.backup(camera.profile.slots);
+        report('5/5 원본 백업 파일 자동 저장 중');
+        await store.backup(camera.identity!, snapshots);
+        cameraSlots = {for (final s in snapshots) s.slot: s};
+        slotsReadAt = DateTime.now();
+        cameraReady = true;
+        watchConnection();
         report(
-          '${camera.identity!.model} 연결됨 · 펌웨어 ${camera.identity!.firmware}',
+          '${camera.identity!.model} 준비 완료 · 펌웨어 ${camera.identity!.firmware} · 원본 자동 백업 완료',
         );
       } catch (_) {
-        await transport.close();
-        camera.identity = null;
+        try {
+          await transport.close();
+        } finally {
+          clearCamera();
+        }
         rethrow;
       }
-      await refreshSlots();
     });
   }
 
@@ -691,6 +774,27 @@ class _WorkspaceState extends State<Workspace> {
       ) ??
       false;
   Future<void> apply() async {
+    connectionTimer?.cancel();
+    try {
+      await applyPrepared();
+    } finally {
+      if (cameraReady && transport.opened) watchConnection();
+    }
+  }
+
+  Future<void> applyPrepared() async {
+    if (!cameraReady || !transport.opened) {
+      if (!await confirm(
+        '먼저 카메라를 연결하세요',
+        '레시피 탐색과 배치는 연결 없이 할 수 있습니다. 카메라에 적용하려면 USB 연결과 원본 자동 백업을 먼저 완료해야 합니다.',
+        confirmLabel: '카메라 연결',
+      ))
+        return;
+      await connect();
+      if (!cameraReady || !transport.opened || !mounted) return;
+      // Connecting may change the model and available C slots. Build the plan
+      // only after preparation and ask for confirmation before any write.
+    }
     final plan = <int, Recipe>{
       for (var i = 1; i <= slotCount; i++)
         if (pending(i)) i: assigned(i)!,
@@ -698,22 +802,35 @@ class _WorkspaceState extends State<Workspace> {
     if (plan.isEmpty) return;
     if (!await confirm(
       '카메라 슬롯 덮어쓰기',
-      '${plan.entries.map((e) => 'C${e.key} → ${e.value.cameraName}').join('\n')}\n\n선택한 슬롯의 레시피 설정을 백업한 뒤 덮어씁니다. 배치하지 않은 슬롯은 유지합니다. X-M5는 색농도 단일 설정 저장만 사용자가 확인했습니다. X-T5 전송은 실기 미검증입니다. 먼저 테스트 슬롯 하나로 적용·읽기·복원을 확인하세요. 실패하면 즉시 멈추며 백업에서 수동 복원할 수 있습니다.',
-    )) {
+      '${plan.entries.map((e) => 'C${e.key} → ${e.value.cameraName}').join('\n')}\n\n연결과 설정 호환성을 다시 확인하고, 선택한 슬롯의 현재 원본을 새로 백업한 뒤 전송합니다. 배치하지 않은 슬롯은 유지합니다.',
+    ))
       return;
-    }
     await run(() async {
+      var writeAttempted = false;
       try {
-        await BatchWriter(camera).apply(plan, (snapshots) async {
-          await store.backup(camera.identity!, snapshots);
-        }, report);
+        await verifyConnectedCamera();
+        report('전송할 레시피 설정 범위 확인 중');
+        await camera.validatePlan(plan);
+        await BatchWriter(camera).apply(
+          plan,
+          (snapshots) async {
+            await store.backup(camera.identity!, snapshots);
+          },
+          (message) {
+            if (message.contains('쓰기 및 검증 중')) writeAttempted = true;
+            report(message);
+          },
+        );
         await refreshSlots();
         report('${plan.length}개 슬롯 적용 및 읽기 검증 완료');
       } catch (e, stack) {
+        cameraReady = false;
+        connectionTimer?.cancel();
         cameraSlots = {};
         slotsReadAt = null;
+        if (e is BatchApplyFailure) rethrow;
         Error.throwWithStackTrace(
-          StateError('전송 중단. 일부 설정이 적용되었을 수 있습니다. 백업 메뉴에서 복원하세요. $e'),
+          BatchApplyFailure(e, status, writeAttempted, writeAttempted),
           stack,
         );
       }
@@ -758,7 +875,7 @@ class _WorkspaceState extends State<Workspace> {
               child: const Text('백업 JSON 보기 / 복사'),
             ),
             SimpleDialogOption(
-              onPressed: camera.identity == null
+              onPressed: !cameraReady
                   ? null
                   : () => Navigator.pop(ctx, 'restore'),
               child: const Text('연결한 카메라에 복원'),
@@ -788,6 +905,7 @@ class _WorkspaceState extends State<Workspace> {
           )) {
         return;
       }
+      await verifyConnectedCamera();
       await store.backup(
         camera.identity!,
         await camera.backup(snapshots.map((s) => s.slot).toSet()),
@@ -844,7 +962,9 @@ class _WorkspaceState extends State<Workspace> {
               onPressed: busy ? null : connect,
               icon: Icon(transport.opened ? Icons.usb : Icons.usb_off),
               label: Text(
-                transport.opened ? '${activeModel.name} 연결됨' : '카메라 연결',
+                cameraReady && transport.opened
+                    ? '${activeModel.name} 준비 완료'
+                    : '카메라 연결',
               ),
             ),
           ),
@@ -945,7 +1065,7 @@ class _WorkspaceState extends State<Workspace> {
         contentPadding: EdgeInsets.zero,
         leading: const Icon(Icons.save_outlined),
         title: const Text('카메라 전체 백업'),
-        onTap: busy || camera.identity == null
+        onTap: busy || !cameraReady
             ? null
             : () => run(() async {
                 await store.backup(
@@ -1357,11 +1477,16 @@ class _WorkspaceState extends State<Workspace> {
         '카메라의 현재 설정과 전송 대기 레시피입니다. 배치하지 않은 슬롯은 유지합니다.',
         style: TextStyle(fontSize: 12, color: Colors.black54),
       ),
+      if (!cameraReady)
+        const Padding(
+          padding: EdgeInsets.only(top: 12),
+          child: Text('카메라에 적용하려면 먼저 연결하세요. 연결하면 기기 확인과 원본 백업이 자동으로 진행됩니다.'),
+        ),
+      if (connectionProblem != null)
+        Text(connectionProblem!, style: const TextStyle(color: Colors.red)),
       const SizedBox(height: 24),
       OutlinedButton.icon(
-        onPressed: busy || camera.identity == null
-            ? null
-            : () => run(refreshSlots),
+        onPressed: busy || !cameraReady ? null : () => run(refreshSlots),
         icon: const Icon(Icons.refresh, size: 16),
         label: Text('카메라 $slotLabel 새로고침'),
       ),
@@ -1421,9 +1546,7 @@ class _WorkspaceState extends State<Workspace> {
         ),
       const SizedBox(height: 20),
       FilledButton.icon(
-        onPressed: busy || camera.identity == null || pendingCount == 0
-            ? null
-            : apply,
+        onPressed: busy || pendingCount == 0 ? null : apply,
         icon: const Icon(Icons.sync),
         label: Text(
           hasVisibleAssignments && pendingCount == 0
@@ -1433,7 +1556,7 @@ class _WorkspaceState extends State<Workspace> {
       ),
       const SizedBox(height: 16),
       const Text(
-        '원본 백업 → 순차 전송 → 읽기 검증\nUSB 연결이 필요합니다.',
+        '연결 준비 → 원본 자동 백업 → 전송 → 읽기 검증\n연결 없이 레시피 탐색·배치가 가능합니다.',
         textAlign: TextAlign.center,
         style: TextStyle(fontSize: 11, color: Colors.black54, height: 1.8),
       ),

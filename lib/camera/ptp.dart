@@ -1,5 +1,7 @@
 import 'dart:typed_data';
+
 import 'package:flutter/services.dart';
+
 import '../diagnostic_log.dart';
 
 Uint8List u16(int n) =>
@@ -89,11 +91,12 @@ abstract interface class CameraTransport {
 }
 
 class PtpResponseException extends StateError {
-  PtpResponseException(this.code, this.operation)
+  PtpResponseException(this.code, this.operation, {this.property})
     : super(
         '카메라 응답 0x${code.toRadixString(16)} (명령 0x${operation.toRadixString(16)})',
       );
   final int code, operation;
+  final int? property;
 }
 
 class NativeTransport implements CameraTransport {
@@ -227,7 +230,11 @@ class NativeTransport implements CameraTransport {
         'response op=0x${code.toRadixString(16)} code=0x${response.code.toRadixString(16)} bytes=${data.length} elapsedMs=${elapsed.elapsedMilliseconds}',
       );
       if (response.code != 0x2001) {
-        throw PtpResponseException(response.code, code);
+        throw PtpResponseException(
+          response.code,
+          code,
+          property: params.isEmpty ? null : params.first,
+        );
       }
       return data;
     } on PlatformException catch (e) {

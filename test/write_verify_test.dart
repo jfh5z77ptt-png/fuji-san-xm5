@@ -1,4 +1,5 @@
 import 'dart:typed_data';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:fuji_san/camera/camera.dart';
 import 'package:fuji_san/camera/ptp.dart';
@@ -46,6 +47,8 @@ class CameraFixture implements CameraTransport {
       if (descriptorsUnavailable) throw PtpResponseException(0x2002, 0x1014);
       final type = prop == 0xd18d
           ? 0xffff
+          : prop == 0xd18c
+          ? 4
           : settings.firstWhere((s) => s.id == prop).signed
           ? 3
           : 4;

@@ -224,6 +224,32 @@ Future<void> main() async {
     await fails(() => camera.write(5, Recipe.fresh()), (e) => e is RangeError);
     check(fixture.commands.isEmpty && fixture.written.isEmpty, 'No partial mutation');
   });
+  await run('automatic access check on known firmware changes no slots or recipes', () async {
+    final fixture = Xm5ObservedFixture(); final camera = FujiCamera(fixture);
+    await camera.inspect(); fixture.commands.clear();
+    await camera.validateAccess();
+    check(fixture.selectedSlots.isEmpty && fixture.written.isEmpty, 'Preparation is read-only');
+    check(fixture.commands.where((c) => c == 0x1014).length == 1, 'Bounded fallback is initialized once');
+  });
+  await run('unknown firmware access check stops before slot selection', () async {
+    final fixture = Xm5Fixture(firmware: '9.99')..descriptorsUnavailable = true;
+    final camera = FujiCamera(fixture); await camera.inspect();
+    await fails(() => camera.validateAccess(), (e) => e is PtpResponseException && e.property == 0xd18c);
+    check(fixture.selectedSlots.isEmpty && fixture.written.isEmpty, 'No bypass on unverified firmware');
+  });
+  await run('plan validation rejects late incompatible values before bank selection', () async {
+    final fixture = Xm5Fixture(firmware: '9.99', rejectDescriptor: 0xd1a2);
+    final camera = FujiCamera(fixture); await camera.inspect();
+    await fails(() => camera.validatePlan({1: Recipe.fresh()}), (e) => e is PtpResponseException && e.property == 0xd1a2);
+    check(fixture.selectedSlots.isEmpty && fixture.written.isEmpty, 'No partial recipe or bank change');
+  });
+  await run('backup persistence failure reports that writing never started', () async {
+    final fixture = Xm5ObservedFixture(); final camera = FujiCamera(fixture);
+    await camera.inspect();
+    await fails(() => BatchWriter(camera).apply({1: Recipe.fresh()}, (_) async { throw StateError('disk full'); }, (_) {}),
+      (e) => e is BatchApplyFailure && e.stage == '백업 파일 저장' && !e.backupSaved && !e.writeAttempted);
+    check(fixture.written.isEmpty, 'No recipe writes after failed persistence');
+  });
   print('$passed offline protocol checks passed (simulated transport, no hardware).');
 }
 '''

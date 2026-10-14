@@ -58,10 +58,13 @@ void main() {
       final button = tester.widget<FilledButton>(
         find.widgetWithText(FilledButton, '1개 슬롯 일괄 적용'),
       );
-      expect(
-        button.onPressed,
-        isNull,
-      ); // No fake connection or successful transfer.
+      expect(button.onPressed, isNotNull);
+      await tester.tap(find.text('1개 슬롯 일괄 적용'));
+      await tester.pumpAndSettle();
+      expect(find.text('먼저 카메라를 연결하세요'), findsOneWidget);
+      expect(find.text('카메라 슬롯 덮어쓰기'), findsNothing);
+      await tester.tap(find.text('취소'));
+      await tester.pumpAndSettle();
     });
   }
 }
