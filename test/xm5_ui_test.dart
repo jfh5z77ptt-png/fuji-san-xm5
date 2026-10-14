@@ -63,6 +63,7 @@ void main() {
       await tester.tap(find.text('X-T5 (실험적)').last);
       await tester.pumpAndSettle();
       expect(find.text('C7'), findsOneWidget);
+      expect(find.textContaining('X-T5는 실기 연결'), findsOneWidget);
       await tester.scrollUntilVisible(
         find.text('1개 슬롯 일괄 적용'),
         200,
@@ -72,10 +73,6 @@ void main() {
         ),
       );
       expect(find.text('1개 슬롯 일괄 적용'), findsOneWidget);
-      expect(
-        find.textContaining('X-T5는 실기 연결', skipOffstage: false),
-        findsOneWidget,
-      );
       expect((store.data!['slots'] as Map)['7'], recipe.id);
       expect(tester.takeException(), isNull);
     },
