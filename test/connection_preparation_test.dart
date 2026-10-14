@@ -79,10 +79,11 @@ void main() {
       final nativeCalls = <String>[];
       messenger.setMockMethodCallHandler(NativeTransport.channel, (call) async {
         nativeCalls.add(call.method);
-        if (call.method == 'discover')
+        if (call.method == 'discover') {
           return [
             {'id': 'wpd:test', 'name': 'X-M5'},
           ];
+        }
         if (call.method == 'connect') return {'managedSession': true};
         if (call.method == 'disconnect') return null;
         final args = call.arguments as Map;

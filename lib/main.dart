@@ -788,8 +788,9 @@ class _WorkspaceState extends State<Workspace> {
         '먼저 카메라를 연결하세요',
         '레시피 탐색과 배치는 연결 없이 할 수 있습니다. 카메라에 적용하려면 USB 연결과 원본 자동 백업을 먼저 완료해야 합니다.',
         confirmLabel: '카메라 연결',
-      ))
+      )) {
         return;
+      }
       await connect();
       if (!cameraReady || !transport.opened || !mounted) return;
       // Connecting may change the model and available C slots. Build the plan
@@ -803,8 +804,9 @@ class _WorkspaceState extends State<Workspace> {
     if (!await confirm(
       '카메라 슬롯 덮어쓰기',
       '${plan.entries.map((e) => 'C${e.key} → ${e.value.cameraName}').join('\n')}\n\n연결과 설정 호환성을 다시 확인하고, 선택한 슬롯의 현재 원본을 새로 백업한 뒤 전송합니다. 배치하지 않은 슬롯은 유지합니다.',
-    ))
+    )) {
       return;
+    }
     await run(() async {
       var writeAttempted = false;
       try {
