@@ -156,8 +156,9 @@ void main() {
       await camera.restore(originals.first);
       expect(fixture.slots[1]![0xd195], u16(8));
       for (final entry in originals.first.properties.entries) {
-        if (entry.key != 0xd195)
+        if (entry.key != 0xd195) {
           expect(fixture.slots[1]![entry.key], entry.value);
+        }
       }
       expect(fixture.slots[2].toString(), untouched);
       expect(fixture.written, isNot(contains(0xd195)));

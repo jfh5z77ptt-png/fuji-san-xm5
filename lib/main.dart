@@ -770,8 +770,9 @@ class _WorkspaceState extends State<Workspace> {
     try {
       await diagnoseXm5SlotsPrepared();
     } finally {
-      if ((cameraReady || cameraReadOnly) && transport.opened)
+      if ((cameraReady || cameraReadOnly) && transport.opened) {
         watchConnection();
+      }
     }
   }
 
