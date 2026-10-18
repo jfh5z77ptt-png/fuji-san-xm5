@@ -142,7 +142,7 @@ class _WorkspaceState extends State<Workspace> {
   String? connectionProblem;
   AppRelease? update;
   bool checkingUpdate = false;
-  String updateStatus = 'X-T5 4.31 조회·슬롯 진단 수정판 · 0.3.0-alpha.3';
+  String updateStatus = 'X-M5 펌웨어 제한 해제 수정판 · $appRelease';
   Timer? updateTimer;
   bool busy = true, loaded = false;
   String status = '라이브러리를 여는 중', query = '';
