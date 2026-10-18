@@ -718,7 +718,15 @@ class _WorkspaceState extends State<Workspace> {
           await transport.close();
           clearCamera();
         } else if (cameraReadOnly) {
-          await refreshSlots();
+          try {
+            await refreshSlots();
+          } catch (error) {
+            // Keep the original diagnostic available even if the final
+            // preview read fails after restoring the selector.
+            result['refreshError'] = DiagnosticLog.instance.redact('$error');
+            await transport.close();
+            clearCamera();
+          }
         }
         await copyJson(
           result['success'] == true
@@ -726,7 +734,20 @@ class _WorkspaceState extends State<Workspace> {
               : 'X-T5 슬롯 진단 결과 · 복원 상태를 확인하세요',
           const JsonEncoder.withIndent('  ').convert(result),
         );
-        report('X-T5 슬롯 진단 완료 · 레시피 쓰기 없음 · 결과 JSON을 확인하세요');
+        report(
+          result['success'] == true
+              ? 'X-T5 슬롯 진단 성공 · 레시피 전송 미검증 · 결과 JSON을 확인하세요'
+              : result['originalSelectorRestored'] == true
+              ? 'X-T5 슬롯 진단 실패 · 원래 선택값 복원됨 · 결과 JSON을 확인하세요'
+              : 'X-T5 슬롯 진단 실패 · 원래 선택값 복원 미확인 · 카메라를 확인하세요',
+        );
+      } catch (_) {
+        try {
+          await transport.close();
+        } finally {
+          clearCamera();
+        }
+        rethrow;
       } finally {
         if (ownConnection) {
           try {
