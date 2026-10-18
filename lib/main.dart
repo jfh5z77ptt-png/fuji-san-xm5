@@ -135,13 +135,14 @@ class _WorkspaceState extends State<Workspace> {
   String get slotLabel => activeModel.slotLabel;
   DateTime? slotsReadAt;
   bool cameraReady = false;
+  bool cameraReadOnly = false;
   String? connectedDeviceId;
   CameraIdentity? connectedIdentity;
   Timer? connectionTimer;
   String? connectionProblem;
   AppRelease? update;
   bool checkingUpdate = false;
-  String updateStatus = '연결 준비 자동화 수정판 · 0.3.0-alpha.2';
+  String updateStatus = 'X-T5 4.31 조회·슬롯 진단 수정판 · 0.3.0-alpha.3';
   Timer? updateTimer;
   bool busy = true, loaded = false;
   String status = '라이브러리를 여는 중', query = '';
@@ -216,15 +217,22 @@ class _WorkspaceState extends State<Workspace> {
     cameraSlots = {};
     slotsReadAt = null;
     report('카메라 $slotLabel 레시피를 읽는 중');
-    final snapshots = await camera.backup(camera.profile.slots);
+    final snapshots = cameraReadOnly
+        ? [await camera.readCurrentSlot()]
+        : await camera.backup(camera.profile.slots);
     cameraSlots = {for (final s in snapshots) s.slot: s};
     slotsReadAt = DateTime.now();
-    report('카메라 $slotLabel 읽기 완료 · 원래 슬롯 복원됨');
+    report(
+      cameraReadOnly
+          ? '현재 슬롯 조회 완료 · 슬롯 변경 없음'
+          : '카메라 $slotLabel 읽기 완료 · 원래 슬롯 복원됨',
+    );
   }
 
   void clearCamera() {
     connectionTimer?.cancel();
     cameraReady = false;
+    cameraReadOnly = false;
     camera.identity = null;
     connectedIdentity = null;
     cameraSlots = {};
@@ -265,7 +273,12 @@ class _WorkspaceState extends State<Workspace> {
   void watchConnection() {
     connectionTimer?.cancel();
     connectionTimer = Timer.periodic(const Duration(seconds: 30), (_) async {
-      if (!mounted || busy || !cameraReady || !transport.opened) return;
+      if (!mounted ||
+          busy ||
+          (!cameraReady && !cameraReadOnly) ||
+          !transport.opened) {
+        return;
+      }
       setState(() => busy = true);
       try {
         // Read only; keeps the session responsive without selecting a slot.
@@ -283,6 +296,41 @@ class _WorkspaceState extends State<Workspace> {
 
   Future<void> showCameraSlot(int slot) async {
     final snapshot = cameraSlots[slot]!;
+    if (cameraReadOnly) {
+      await showDialog<void>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: Text('C$slot 현재 설정 · 읽기 전용'),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(snapshot.name),
+                const SizedBox(height: 12),
+                for (final setting in settings)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 8),
+                    child: Text(
+                      '${setting.label}: ${setting.accepts(snapshot.values[setting.id]!) ? setting.display(snapshot.values[setting.id]!) : '미확인 원시값 ${snapshot.values[setting.id]} · 원본 유지'}',
+                    ),
+                  ),
+                const Text(
+                  '이 화면에서는 설정을 변경하지 않습니다. 슬롯 전환과 레시피 전송은 아직 실기 미검증입니다.',
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('닫기'),
+            ),
+          ],
+        ),
+      );
+      return;
+    }
     setState(() => busy = true);
     try {
       await Navigator.of(context).push<void>(
@@ -504,7 +552,7 @@ class _WorkspaceState extends State<Workspace> {
 
   Future<void> connect() async {
     await run(() async {
-      if (transport.opened && cameraReady) {
+      if (transport.opened && (cameraReady || cameraReadOnly)) {
         await transport.close();
         clearCamera();
         connectionProblem = null;
@@ -550,7 +598,27 @@ class _WorkspaceState extends State<Workspace> {
         preferredModel = camera.profile;
         connectedIdentity = camera.identity;
         report('3/5 설정 조회 호환성 확인 중');
-        await camera.validateAccess();
+        try {
+          await camera.validateAccess();
+        } on PtpResponseException catch (error) {
+          if (!camera.xt5Firmware431 ||
+              error.operation != 0x1014 ||
+              error.code != 0x2002) {
+            rethrow;
+          }
+          report('X-T5 4.31 · 현재 슬롯을 읽는 중 · 설정 쓰기 없음');
+          final snapshot = await camera.readCurrentSlot();
+          report('현재 슬롯 원본 백업 파일 저장 중');
+          await store.backup(camera.identity!, [snapshot]);
+          cameraSlots = {snapshot.slot: snapshot};
+          slotsReadAt = DateTime.now();
+          cameraReadOnly = true;
+          watchConnection();
+          report(
+            'X-T5 읽기 전용 연결 · 펌웨어 4.31 · C${snapshot.slot} 원본 저장 완료 · 전체 슬롯 백업·전송 미검증',
+          );
+          return;
+        }
         report('4/5 원본 슬롯 자동 백업을 읽는 중');
         final snapshots = await camera.backup(camera.profile.slots);
         report('5/5 원본 백업 파일 자동 저장 중');
@@ -595,6 +663,77 @@ class _WorkspaceState extends State<Workspace> {
         if (ownConnection) {
           await transport.close();
           camera.identity = null;
+        }
+      }
+    });
+  }
+
+  Future<void> diagnoseXt5Slots() async {
+    connectionTimer?.cancel();
+    try {
+      await diagnoseXt5SlotsPrepared();
+    } finally {
+      if ((cameraReady || cameraReadOnly) && transport.opened) {
+        watchConnection();
+      }
+    }
+  }
+
+  Future<void> diagnoseXt5SlotsPrepared() async {
+    if (!await confirm(
+      'X-T5 4.31 슬롯 전환 진단',
+      '현재 슬롯 원본을 먼저 저장합니다. 그 뒤 USB 슬롯 선택값 1~7을 차례로 보내고 설정을 읽은 다음 원래 선택값을 복원합니다. 레시피 이름이나 설정값은 쓰지 않습니다. 실제 다이얼 C 번호와의 대응과 레시피 전송은 별도 확인이 필요합니다.',
+      confirmLabel: '진단 실행',
+    )) {
+      return;
+    }
+    await run(() async {
+      final ownConnection = !transport.opened;
+      final expected = connectedIdentity;
+      try {
+        if (ownConnection) {
+          final devices = await transport.discover();
+          if (devices.length != 1) {
+            throw StateError('진단할 후지필름 카메라 한 대만 연결하세요.');
+          }
+          await transport.open(devices.single['id'] as String);
+        }
+        report('X-T5 4.31 진단 기기 확인 중');
+        await camera.inspect();
+        if (!camera.xt5Firmware431) {
+          throw StateError('X-T5 펌웨어 4.31 전용 진단입니다.');
+        }
+        if (!ownConnection &&
+            expected != null &&
+            (camera.identity!.serial != expected.serial ||
+                camera.identity!.model != expected.model ||
+                camera.identity!.firmware != expected.firmware)) {
+          throw StateError('연결한 기기가 바뀌었습니다. 새로 연결한 뒤 진단하세요.');
+        }
+        report('진단 전 현재 슬롯 원본 백업 파일 저장 중');
+        await store.backup(camera.identity!, [await camera.readCurrentSlot()]);
+        report('X-T5 C1~C7 선택값 확인 및 원래 선택값 복원 중');
+        final result = await camera.probeXt5Slots();
+        if (result['originalSelectorRestored'] != true) {
+          await transport.close();
+          clearCamera();
+        } else if (cameraReadOnly) {
+          await refreshSlots();
+        }
+        await copyJson(
+          result['success'] == true
+              ? 'X-T5 슬롯 진단 성공 · 레시피 전송 미검증'
+              : 'X-T5 슬롯 진단 결과 · 복원 상태를 확인하세요',
+          const JsonEncoder.withIndent('  ').convert(result),
+        );
+        report('X-T5 슬롯 진단 완료 · 레시피 쓰기 없음 · 결과 JSON을 확인하세요');
+      } finally {
+        if (ownConnection) {
+          try {
+            await transport.close();
+          } finally {
+            clearCamera();
+          }
         }
       }
     });
@@ -778,11 +917,23 @@ class _WorkspaceState extends State<Workspace> {
     try {
       await applyPrepared();
     } finally {
-      if (cameraReady && transport.opened) watchConnection();
+      if ((cameraReady || cameraReadOnly) && transport.opened) {
+        watchConnection();
+      }
     }
   }
 
   Future<void> applyPrepared() async {
+    if (cameraReadOnly && transport.opened) {
+      if (await confirm(
+        'X-T5 전송 검증이 필요합니다',
+        '현재는 현재 슬롯 읽기와 원본 저장만 확인하는 모드입니다. 슬롯 전환 진단으로 C1~C7 선택값과 원래 상태 복원을 먼저 확인하세요. 레시피는 전송하지 않습니다.',
+        confirmLabel: '슬롯 전환 진단',
+      )) {
+        await diagnoseXt5Slots();
+      }
+      return;
+    }
     if (!cameraReady || !transport.opened) {
       if (!await confirm(
         '먼저 카메라를 연결하세요',
@@ -792,7 +943,12 @@ class _WorkspaceState extends State<Workspace> {
         return;
       }
       await connect();
-      if (!cameraReady || !transport.opened || !mounted) return;
+      if (!mounted || !transport.opened) return;
+      if (cameraReadOnly) {
+        await applyPrepared();
+        return;
+      }
+      if (!cameraReady) return;
       // Connecting may change the model and available C slots. Build the plan
       // only after preparation and ask for confirmation before any write.
     }
@@ -964,7 +1120,9 @@ class _WorkspaceState extends State<Workspace> {
               onPressed: busy ? null : connect,
               icon: Icon(transport.opened ? Icons.usb : Icons.usb_off),
               label: Text(
-                cameraReady && transport.opened
+                cameraReadOnly && transport.opened
+                    ? '${activeModel.name} 읽기 전용'
+                    : cameraReady && transport.opened
                     ? '${activeModel.name} 준비 완료'
                     : '카메라 연결',
               ),
@@ -1090,6 +1248,13 @@ class _WorkspaceState extends State<Workspace> {
         title: const Text('X-M5 슬롯 전환 진단'),
         subtitle: const Text('1.20 전용 · 선택값 변경 후 복원 · 레시피 쓰기 없음'),
         onTap: busy ? null : diagnoseXm5Slots,
+      ),
+      ListTile(
+        contentPadding: EdgeInsets.zero,
+        leading: const Icon(Icons.fact_check_outlined),
+        title: const Text('X-T5 슬롯 전환 진단'),
+        subtitle: const Text('4.31 전용 · C1~C7 선택값 검사 후 복원'),
+        onTap: busy ? null : diagnoseXt5Slots,
       ),
       const Divider(height: 48),
       ListTile(
@@ -1465,7 +1630,7 @@ class _WorkspaceState extends State<Workspace> {
           padding: const EdgeInsets.symmetric(vertical: 12),
           child: Text(
             activeModel == CameraModel.xt5
-                ? 'X-T5는 실기 연결·전송을 아직 확인하지 않았습니다. 먼저 도구 → 카메라 호환성 진단을 실행하세요. C1–C7을 지원하며 카메라가 설정 범위를 제공할 때만 전송합니다.'
+                ? 'X-T5는 실기 연결·전송을 아직 확인하지 않았습니다. 4.31에서 설정 범위 조회가 거부되면 현재 슬롯을 읽기 전용으로 표시하고 원본을 저장합니다. C1–C7 전환은 별도 진단으로 확인합니다.'
                 : 'X-M5 1.20의 USB 슬롯 조회와 색농도 저장은 사용자가 확인했습니다. 실제 C번호와 설정은 카메라에서 대조하세요. 전체 레시피 전송·복원은 실기 미검증입니다. 사진용 C1–C4와 필름 시뮬레이션 다이얼 C를 사용하세요.',
           ),
         ),
@@ -1479,18 +1644,27 @@ class _WorkspaceState extends State<Workspace> {
         '카메라의 현재 설정과 전송 대기 레시피입니다. 배치하지 않은 슬롯은 유지합니다.',
         style: TextStyle(fontSize: 12, color: Colors.black54),
       ),
-      if (!cameraReady)
+      if (!cameraReady && !cameraReadOnly)
         const Padding(
           padding: EdgeInsets.only(top: 12),
           child: Text('카메라에 적용하려면 먼저 연결하세요. 연결하면 기기 확인과 원본 백업이 자동으로 진행됩니다.'),
         ),
+      if (cameraReadOnly) ...[
+        const Text('읽기 전용 연결입니다. 현재 슬롯 원본만 저장되었으며, 레시피 전송은 비활성화되어 있습니다.'),
+        OutlinedButton(
+          onPressed: busy ? null : diagnoseXt5Slots,
+          child: const Text('C1~C7 전환 확인'),
+        ),
+      ],
       if (connectionProblem != null)
         Text(connectionProblem!, style: const TextStyle(color: Colors.red)),
       const SizedBox(height: 24),
       OutlinedButton.icon(
-        onPressed: busy || !cameraReady ? null : () => run(refreshSlots),
+        onPressed: busy || (!cameraReady && !cameraReadOnly)
+            ? null
+            : () => run(refreshSlots),
         icon: const Icon(Icons.refresh, size: 16),
-        label: Text('카메라 $slotLabel 새로고침'),
+        label: Text(cameraReadOnly ? '현재 슬롯 새로고침' : '카메라 $slotLabel 새로고침'),
       ),
       Text(
         slotsReadAt == null

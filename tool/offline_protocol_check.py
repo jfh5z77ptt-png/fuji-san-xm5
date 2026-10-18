@@ -250,9 +250,41 @@ Future<void> main() async {
       (e) => e is BatchApplyFailure && e.stage == '백업 파일 저장' && !e.backupSaved && !e.writeAttempted);
     check(fixture.written.isEmpty, 'No recipe writes after failed persistence');
   });
+  await run('X-T5 4.31 current-bank read preserves grain 7 without any writes', () async {
+    final fixture = Xt5ObservedFixture(); final camera = FujiCamera(fixture);
+    await camera.inspect(); fixture.commands.clear();
+    final snapshot = await camera.readCurrentSlot();
+    check(snapshot.values[0xd195] == 7 && snapshot.values[0xd19b] == -1, 'Raw grain and signed WB');
+    check(fixture.commands.every((c) => c == 0x1015), 'Only current-value reads');
+    check(fixture.written.isEmpty && fixture.selectedSlots.isEmpty, 'No recipe or selector writes');
+  });
+  await run('X-T5 4.31 explicit slot probe restores original without enabling recipe writes', () async {
+    final fixture = Xt5ObservedFixture(); final camera = FujiCamera(fixture);
+    await camera.inspect(); final before = fixture.slots.toString();
+    final result = await camera.probeXt5Slots();
+    check(result['success'] == true && result['recipeWrites'] == false, 'Probe result');
+    check(fixture.selectedSlots.join(',') == '1,2,3,4,5,6,7,1', 'Seven candidates then restore');
+    check(fixture.slots.toString() == before && fixture.written.isEmpty, 'All banks unchanged');
+    await fails(() => camera.write(1, Recipe.fresh()), (e) => e is PtpResponseException);
+    check(fixture.written.isEmpty, 'Probe cannot unlock recipe writes');
+  });
+  await run('X-T5 4.31 failed or ignored selection restores and other firmware is blocked', () async {
+    for (final fixture in [Xt5ObservedFixture(ignoreCandidate: 2), Xt5ObservedFixture(failReadAt: 3)]) {
+      final camera = FujiCamera(fixture); await camera.inspect();
+      final result = await camera.probeXt5Slots();
+      check(result['success'] == false && result['originalSelectorRestored'] == true, 'Restoration on failure');
+      check(fixture.written.isEmpty && fixture.selected == 1, 'No recipe mutation');
+    }
+    final fixture = Xt5ObservedFixture(firmware: '4.32'); final camera = FujiCamera(fixture);
+    await camera.inspect(); fixture.commands.clear();
+    await fails(() => camera.probeXt5Slots(), (e) => e is StateError);
+    check(fixture.commands.isEmpty, 'No traffic on unverified firmware');
+  });
   print('$passed offline protocol checks passed (simulated transport, no hardware).');
 }
 '''
-    runner = runner.replace('FIXTURES', fixture + '\n' + xm5)
+    xt5 = (root / 'test/xt5_431_test.dart').read_text()
+    xt5 = xt5[xt5.index('class Xt5ObservedFixture'):xt5.index('void main()')]
+    runner = runner.replace('FIXTURES', fixture + '\n' + xm5 + '\n' + xt5)
     (target / 'check.dart').write_text(runner)
     subprocess.run([args.dart, str(target / 'check.dart')], check=True, cwd=target)

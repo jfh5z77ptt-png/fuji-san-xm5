@@ -6,6 +6,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:fuji_san/camera/camera.dart';
 import 'package:fuji_san/camera/ptp.dart';
 import 'package:fuji_san/main.dart';
+import 'package:fuji_san/domain/recipe.dart';
 
 import 'slot_navigation_test.dart' show BackupStore;
 import 'xm5_test.dart' show Xm5Fixture;
@@ -63,7 +64,7 @@ void main() {
     },
   );
 
-  for (final scenario in ['ready', 'descriptor', 'disk']) {
+  for (final scenario in ['ready', 'descriptor', 'disk', 'xt5-readonly']) {
     testWidgets('automatic preparation: $scenario', (tester) async {
       tester.view.physicalSize = const Size(1440, 1200);
       tester.view.devicePixelRatio = 1;
@@ -71,9 +72,21 @@ void main() {
       addTearDown(tester.view.resetDevicePixelRatio);
       addTearDown(() async => tester.pumpWidget(const SizedBox()));
       final fixture = Xm5Fixture(
-        firmware: scenario == 'descriptor' ? '9.99' : '1.20',
+        model: scenario == 'xt5-readonly' ? 'X-T5' : 'X-M5',
+        firmware: scenario == 'xt5-readonly'
+            ? '4.31'
+            : scenario == 'descriptor'
+            ? '9.99'
+            : '1.20',
       )..descriptorsUnavailable = true;
+      if (scenario == 'xt5-readonly') {
+        fixture.slots[fixture.selected]![0xd195] = u16(7);
+      }
       final store = PreparationStore()..failBackup = scenario == 'disk';
+      if (scenario == 'xt5-readonly') {
+        final recipe = Recipe.fresh();
+        await store.save([recipe], {4: recipe.id});
+      }
       final messenger =
           TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
       final nativeCalls = <String>[];
@@ -123,7 +136,41 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.text('연결할 카메라'), findsNothing);
       expect(fixture.written, isEmpty);
-      if (scenario == 'ready') {
+      if (scenario == 'xt5-readonly') {
+        expect(store.backupsSaved, 1);
+        expect(find.text('X-T5 읽기 전용'), findsOneWidget);
+        expect(fixture.selectedSlots, isEmpty);
+        expect(fixture.written, isEmpty);
+        await tester.scrollUntilVisible(
+          find.text('Original 4'),
+          150,
+          scrollable: find.descendant(
+            of: find.byKey(const ValueKey('camera-kit')),
+            matching: find.byType(Scrollable),
+          ),
+        );
+        await tester.tap(find.text('Original 4'));
+        await tester.pumpAndSettle();
+        expect(find.textContaining('미확인 원시값 7'), findsOneWidget);
+        expect(find.text('카메라에 저장'), findsNothing);
+        await tester.tap(find.text('닫기'));
+        await tester.pumpAndSettle();
+        await tester.scrollUntilVisible(
+          find.text('1개 슬롯 일괄 적용'),
+          150,
+          scrollable: find.descendant(
+            of: find.byKey(const ValueKey('camera-kit')),
+            matching: find.byType(Scrollable),
+          ),
+        );
+        await tester.tap(find.text('1개 슬롯 일괄 적용'));
+        await tester.pumpAndSettle();
+        expect(find.text('X-T5 전송 검증이 필요합니다'), findsOneWidget);
+        expect(fixture.selectedSlots, isEmpty);
+        expect(fixture.written, isEmpty);
+        await tester.tap(find.text('취소'));
+        await tester.pumpAndSettle();
+      } else if (scenario == 'ready') {
         expect(store.backupsSaved, 1);
         expect(find.text('X-M5 준비 완료'), findsOneWidget);
         expect(fixture.selected, 4);

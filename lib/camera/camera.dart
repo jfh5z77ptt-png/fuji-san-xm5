@@ -15,8 +15,9 @@ class CameraIdentity {
 }
 
 class Snapshot {
-  Snapshot(this.slot, this.properties);
+  Snapshot(this.slot, this.properties, {this.normalizeGrainOff = true});
   final int slot;
+  final bool normalizeGrainOff;
   final Map<int, Uint8List> properties;
   String get rawName => Reader(properties[0xd18d]!).string();
   String get name {
@@ -26,7 +27,10 @@ class Snapshot {
 
   Map<int, int> get values => {
     for (final s in settings)
-      s.id: s.id == 0xd195 && Reader(properties[s.id]!).read16() == 6
+      s.id:
+          normalizeGrainOff &&
+              s.id == 0xd195 &&
+              Reader(properties[s.id]!).read16() == 6
           ? 1
           : s.signed
           ? ByteData.sublistView(properties[s.id]!).getInt16(0, Endian.little)
@@ -73,6 +77,8 @@ class FujiCamera implements RecipeCamera {
   bool _knownSchemaOnly = false;
   bool get xm5Firmware120 =>
       identity?.model == 'X-M5' && identity?.firmware == '1.20';
+  bool get xt5Firmware431 =>
+      identity?.model == 'X-T5' && identity?.firmware == '4.31';
   Future<Uint8List> read(int prop) => transport.command(0x1015, params: [prop]);
   Future<void> set(int prop, Uint8List value) async {
     await transport.command(0x1016, params: [prop], outgoing: value);
@@ -134,6 +140,31 @@ class FujiCamera implements RecipeCamera {
 
   void _ready() {
     if (identity == null) throw StateError('카메라 모델을 먼저 확인하세요.');
+  }
+
+  // Reads the current bank without selecting a bank, asking for a descriptor,
+  // or interpreting unknown wire enums (e.g. X-T5 4.31 grain value 7).
+  Future<Snapshot> readCurrentSlot() async {
+    _ready();
+    final original = await read(0xd18c);
+    if (original.length != 2) {
+      throw const FormatException('슬롯 선택값 길이가 올바르지 않습니다.');
+    }
+    final slot = Reader(original).read16();
+    profile.validateSlots([slot]);
+    final fields = <int, Uint8List>{0xd18d: await read(0xd18d)};
+    DiagnosticLog.instance.protect(Reader(fields[0xd18d]!).string());
+    for (final setting in settings) {
+      final value = await read(setting.id);
+      if (value.length != 2) {
+        throw FormatException('${setting.label} 조회값 길이 오류');
+      }
+      fields[setting.id] = value;
+    }
+    if (!_same(original, await read(0xd18c))) {
+      throw StateError('조회 중 카메라 슬롯이 바뀌었습니다. 다시 조회하세요.');
+    }
+    return Snapshot(slot, fields, normalizeGrainOff: false);
   }
 
   // Read and validate access before selecting any bank or changing recipes.
@@ -240,6 +271,20 @@ class FujiCamera implements RecipeCamera {
     if (identity!.model != 'X-M5' || identity!.firmware != '1.20') {
       throw StateError('슬롯 전환 진단은 X-M5 펌웨어 1.20 전용입니다.');
     }
+    return _probeSlotSelection('xm5-slot-selection');
+  }
+
+  Future<Map<String, dynamic>> probeXt5Slots() async {
+    _ready();
+    if (!xt5Firmware431) {
+      throw StateError('슬롯 전환 진단은 X-T5 펌웨어 4.31 전용입니다.');
+    }
+    return _probeSlotSelection('xt5-slot-selection');
+  }
+
+  // Explicit user-invoked diagnostic: only the selector can be written.
+  // This never enables descriptor fallback or recipe writes for X-T5.
+  Future<Map<String, dynamic>> _probeSlotSelection(String diagnostic) async {
     final ids = [0xd18d, ...settings.map((s) => s.id)];
     if (!operations.contains(0x1015) ||
         !operations.contains(0x1016) ||
@@ -272,7 +317,7 @@ class FujiCamera implements RecipeCamera {
     final rows = <Map<String, dynamic>>[];
     final signatures = <String>{};
     final result = <String, dynamic>{
-      'diagnostic': 'xm5-slot-selection',
+      'diagnostic': diagnostic,
       'model': identity!.model,
       'firmware': identity!.firmware,
       'recipeWrites': false,
