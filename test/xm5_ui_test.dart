@@ -66,10 +66,18 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(find.text('X-T5 (실험적)').last);
       await tester.pumpAndSettle();
-      expect(find.text('C7'), findsOneWidget);
       expect(find.textContaining('X-T5 4.31의 USB 슬롯 전환'), findsOneWidget);
       expect(find.text('X-M5 슬롯 전환 진단'), findsNothing);
       expect(find.text('X-T5 슬롯 전환 진단'), findsOneWidget);
+      await tester.scrollUntilVisible(
+        find.text('C7'),
+        200,
+        scrollable: find.descendant(
+          of: find.byKey(const ValueKey('camera-kit')),
+          matching: find.byType(Scrollable),
+        ),
+      );
+      expect(find.text('C7'), findsOneWidget);
       await tester.scrollUntilVisible(
         find.text('1개 슬롯 일괄 적용'),
         200,

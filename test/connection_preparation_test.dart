@@ -154,6 +154,14 @@ void main() {
         expect(fixture.written, isNotEmpty);
         expect(fixture.written, isNot(contains(0xd195)));
         expect(fixture.slots[4]![0xd195], u16(7));
+        await tester.scrollUntilVisible(
+          find.text('배치한 레시피가 모두 적용됨'),
+          150,
+          scrollable: find.descendant(
+            of: find.byKey(const ValueKey('camera-kit')),
+            matching: find.byType(Scrollable),
+          ),
+        );
         expect(find.text('배치한 레시피가 모두 적용됨'), findsOneWidget);
         expect(store.backupsSaved, 2);
         expect(fixture.selected, 4);

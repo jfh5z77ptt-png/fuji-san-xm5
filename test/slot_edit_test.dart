@@ -96,6 +96,12 @@ void main() {
     await tester.scrollUntilVisible(
       find.text('카메라 현재 값 유지 · 전송 및 복원에서 제외'),
       200,
+      scrollable: find
+          .descendant(
+            of: find.byType(ListView),
+            matching: find.byType(Scrollable),
+          )
+          .first,
     );
     expect(
       find.descendant(
