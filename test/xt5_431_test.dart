@@ -10,8 +10,8 @@ class Xt5ObservedFixture extends Xm5Fixture {
   Xt5ObservedFixture({
     this.ignoreCandidate,
     this.failReadAt,
-    String firmware = '4.31',
-  }) : super(model: 'X-T5', firmware: firmware) {
+    super.firmware = '4.31',
+  }) : super(model: 'X-T5') {
     selected = 1;
     descriptorsUnavailable = true;
     final observed = <int, int>{
