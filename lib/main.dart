@@ -763,7 +763,7 @@ class _WorkspaceState extends State<Workspace> {
   Future<void> diagnoseXm5Slots() async {
     if (!await confirm(
       'X-M5 슬롯 전환 진단',
-      'X-M5 펌웨어 1.20 전용 검사입니다. USB의 슬롯 선택값 1~4를 차례로 보내고 레시피를 읽은 뒤 원래 선택값으로 복원합니다. 레시피 설정값이나 이름을 쓰는 명령은 보내지 않습니다. 이 선택값이 실제 C1~C4와 같은지는 아직 확인되지 않았습니다.\n\n카메라 한 대만 연결하고, 검사 중 케이블을 분리하지 마세요. 오류가 나면 결과를 복사하고 카메라 상태를 확인하세요.',
+      'X-M5 전용 검사이며 펌웨어 버전으로 제한하지 않습니다. USB의 슬롯 선택값 1~4를 차례로 보내고 레시피를 읽은 뒤 원래 선택값으로 복원합니다. 레시피 설정값이나 이름을 쓰는 명령은 보내지 않습니다. 이 선택값이 실제 C1~C4와 같은지는 아직 확인되지 않았습니다.\n\n카메라 한 대만 연결하고, 검사 중 케이블을 분리하지 마세요. 오류가 나면 결과를 복사하고 카메라 상태를 확인하세요.',
       confirmLabel: '진단 실행',
     )) {
       return;
@@ -1267,7 +1267,7 @@ class _WorkspaceState extends State<Workspace> {
         contentPadding: EdgeInsets.zero,
         leading: const Icon(Icons.swap_horiz),
         title: const Text('X-M5 슬롯 전환 진단'),
-        subtitle: const Text('1.20 전용 · 선택값 변경 후 복원 · 레시피 쓰기 없음'),
+        subtitle: const Text('펌웨어 제한 없음 · 선택값 변경 후 복원 · 레시피 쓰기 없음'),
         onTap: busy ? null : diagnoseXm5Slots,
       ),
       ListTile(
@@ -1894,7 +1894,7 @@ class _RecipeEditorState extends State<RecipeEditor> {
                         ),
                 ),
             const Text(
-              '카메라 상태에 따라 사용 가능한 값이 달라질 수 있습니다. 기종별 설정 범위와 카메라 응답을 확인합니다. X100VI 1.32와 X-M5 1.20에서 속성 설명 요청이 거부되면 앱의 설정 범위를 확인하고, 쓰기 후 다시 읽어 검증합니다. X-T5에는 이 예외 처리를 적용하지 않습니다. X-M5·X-T5 전송은 실험적 지원입니다.',
+              '카메라 상태에 따라 사용 가능한 값이 달라질 수 있습니다. 기종별 설정 범위와 카메라 응답을 확인합니다. X-M5는 펌웨어 버전 제한 없이 연결된 카메라의 속성과 설정값을 검사합니다. 속성 설명을 제공하지 않으면 앱의 X-M5 설정 범위를 확인하며, 제공되는 카메라 범위는 그대로 따릅니다. 원본 백업 저장 후 전송하고 다시 읽어 검증합니다. X100VI 1.32의 설명 조회 예외도 유지합니다. X-T5에는 이 예외 처리를 적용하지 않습니다. X-M5·X-T5 전송은 실험적 지원입니다.',
               style: TextStyle(fontSize: 12, color: Colors.black54),
             ),
           ],

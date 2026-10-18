@@ -77,14 +77,22 @@ Future<void> main() async {
     await fails(() => connected.write(7, Recipe.fresh()), (e) => e is RangeError);
     check(fixture.commands.isEmpty && camera.identity == null, 'No commands');
   });
-  await run('no X100VI descriptor fallback on X-M5', () async {
-    final fixture = Xm5Fixture()..descriptorsUnavailable = true;
-    final camera = FujiCamera(fixture); await camera.inspect();
-    await fails(() => camera.write(1, Recipe.fresh()), (e) => e is PtpResponseException);
-    check(fixture.written.isEmpty && fixture.selected == 4, 'No recipe writes');
+  await run('X-M5 all firmware use bounded model fallback', () async {
+    for (final firmware in ['1.00', '1.20', '1.21', '9.99', 'unknown']) {
+      final fixture = Xm5ObservedFixture(firmware: firmware);
+      final camera = FujiCamera(fixture); await camera.inspect();
+      await camera.validateAccess();
+      check(fixture.selectedSlots.isEmpty && fixture.written.isEmpty, 'Preparation read-only');
+      final backup = await camera.backup(camera.profile.slots);
+      await camera.validatePlan({1: Recipe.fresh()});
+      await camera.write(1, Recipe.fresh()); await camera.restore(backup.first);
+      final restored = (await camera.backup({1})).single;
+      check(restored.rawName == backup.first.rawName && restored.values.toString() == backup.first.values.toString(), 'Restore');
+      check(fixture.selected == 2 && fixture.selectedSlots.every((s) => s >= 1 && s <= 4), 'Selector bounds');
+    }
   });
   await run('late invalid descriptor causes zero recipe writes', () async {
-    final fixture = Xm5Fixture(rejectDescriptor: 0xd18d);
+    final fixture = Xm5Fixture(rejectDescriptor: 0xd18d, descriptorErrorCode: 0x200f);
     final camera = FujiCamera(fixture); await camera.inspect();
     await fails(() => camera.write(1, Recipe.fresh()), (e) => e is PtpResponseException);
     check(fixture.written.isEmpty && fixture.selected == 4, 'Preflight all fields');
@@ -175,11 +183,11 @@ Future<void> main() async {
     check(report['success'] == false && report['originalSelectorRestored'] == false && report.containsKey('restoreError'), 'Never claim restored');
     check(fixture.written.isEmpty, 'No recipe writes');
   });
-  await run('unobserved firmware and malformed selector prevent probe writes', () async {
+  await run('X-M5 probe accepts other firmware and rejects malformed selector', () async {
     final fixture = Xm5Fixture(firmware: '1.21'); final camera = FujiCamera(fixture);
     await camera.inspect(); fixture.commands.clear();
-    await fails(() async { await camera.probeXm5Slots(); }, (e) => e is StateError);
-    check(fixture.commands.isEmpty, 'Unknown firmware, no USB traffic');
+    final report = await camera.probeXm5Slots();
+    check(report['success'] == true && fixture.written.isEmpty, 'Other firmware probe');
     final malformed = Xm5ProbeFixture(malformedSelector: true); final other = FujiCamera(malformed);
     await other.inspect();
     await fails(() async { await other.probeXm5Slots(); }, (e) => e is StateError);
@@ -206,15 +214,11 @@ Future<void> main() async {
     });
     check(backedUp && fixture.written.join(',') == '${0xd19f}' && fixture.selected == 2, 'Only color changed');
   });
-  await run('X-M5 fallback is exact to firmware and GeneralError response', () async {
+  await run('X-M5 fallback rejects other descriptor errors', () async {
     final fixture = Xm5Fixture(firmware: '1.20', rejectDescriptor: 0xd18c, descriptorErrorCode: 0x200f);
     final camera = FujiCamera(fixture); await camera.inspect();
     await fails(() async { await camera.backup({1}); }, (e) => e is PtpResponseException);
     check(fixture.selectedSlots.isEmpty, 'Different error blocked');
-    final unknown = Xm5Fixture(firmware: '1.21')..descriptorsUnavailable = true;
-    final other = FujiCamera(unknown); await other.inspect();
-    await fails(() => other.write(1, Recipe.fresh()), (e) => e is PtpResponseException);
-    check(unknown.selectedSlots.isEmpty && unknown.written.isEmpty, 'Unknown firmware blocked');
   });
   await run('invalid X-M5 restore value and bank fail before USB traffic', () async {
     final fixture = Xm5ObservedFixture(); final camera = FujiCamera(fixture);
@@ -229,19 +233,39 @@ Future<void> main() async {
     await camera.inspect(); fixture.commands.clear();
     await camera.validateAccess();
     check(fixture.selectedSlots.isEmpty && fixture.written.isEmpty, 'Preparation is read-only');
-    check(fixture.commands.where((c) => c == 0x1014).length == 1, 'Bounded fallback is initialized once');
+    check(fixture.commands.where((c) => c == 0x1014).length == settings.length + 2, 'Descriptors checked per field');
   });
-  await run('unknown firmware access check stops before slot selection', () async {
+  await run('new X-M5 firmware access check uses model schema', () async {
     final fixture = Xm5Fixture(firmware: '9.99')..descriptorsUnavailable = true;
     final camera = FujiCamera(fixture); await camera.inspect();
-    await fails(() => camera.validateAccess(), (e) => e is PtpResponseException && e.property == 0xd18c);
-    check(fixture.selectedSlots.isEmpty && fixture.written.isEmpty, 'No bypass on unverified firmware');
+    await camera.validateAccess();
+    check(fixture.selectedSlots.isEmpty && fixture.written.isEmpty, 'No mutation during access check');
   });
   await run('plan validation rejects late incompatible values before bank selection', () async {
-    final fixture = Xm5Fixture(firmware: '9.99', rejectDescriptor: 0xd1a2);
+    final fixture = Xm5Fixture(firmware: '9.99', rejectDescriptor: 0xd1a2, descriptorErrorCode: 0x200f);
     final camera = FujiCamera(fixture); await camera.inspect();
     await fails(() => camera.validatePlan({1: Recipe.fresh()}), (e) => e is PtpResponseException && e.property == 0xd1a2);
     check(fixture.selectedSlots.isEmpty && fixture.written.isEmpty, 'No partial recipe or bank change');
+  });
+  await run('X-M5 without descriptor operation supports backup write restore', () async {
+    final fixture = Xm5Fixture(firmware: '9.99', descriptorOperation: false);
+    final camera = FujiCamera(fixture); await camera.inspect(); await camera.validateAccess();
+    final backup = await camera.backup({1}); await camera.write(1, Recipe.fresh()); await camera.restore(backup.single);
+    check(!fixture.commands.contains(0x1014) && fixture.selected == 4, 'No unsupported command, restored selector');
+  });
+  await run('X-M5 fallback honors read-only descriptor from another property', () async {
+    final fixture = Xm5Fixture(firmware: '9.99', rejectDescriptor: 0xd18c, readOnlyProperty: 0xd1a2);
+    final camera = FujiCamera(fixture); await camera.inspect();
+    await fails(() => camera.validateAccess(), (e) => e is StateError);
+    await fails(() => camera.validatePlan({1: Recipe.fresh()}), (e) => e is StateError);
+    check(fixture.selectedSlots.isEmpty && fixture.written.isEmpty, 'Read-only never bypassed');
+  });
+  await run('X-M5 unknown raw grain value fails access before writes', () async {
+    final fixture = Xm5Fixture(firmware: '9.99')..descriptorsUnavailable = true;
+    fixture.slots[fixture.selected]![0xd195] = u16(7);
+    final camera = FujiCamera(fixture); await camera.inspect();
+    await fails(() => camera.validateAccess(), (e) => e is StateError && e.toString().contains('원시값 7 (0xd195)'));
+    check(fixture.selectedSlots.isEmpty && fixture.written.isEmpty, 'Unknown value never converted');
   });
   await run('backup persistence failure reports that writing never started', () async {
     final fixture = Xm5ObservedFixture(); final camera = FujiCamera(fixture);

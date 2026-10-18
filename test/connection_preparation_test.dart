@@ -29,36 +29,26 @@ class FileSystemTestFailure extends StateError {
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+  test('X-M5 firmware prepares without changing a bank or recipe', () async {
+    final fixture = Xm5Fixture(firmware: '1.20')..descriptorsUnavailable = true;
+    final camera = FujiCamera(fixture);
+    await camera.inspect();
+    await camera.validateAccess();
+    expect(fixture.selectedSlots, isEmpty);
+    expect(fixture.written, isEmpty);
+    expect(
+      fixture.commands.where((code) => code == 0x1014).length,
+      settings.length + 2,
+    );
+  });
   test(
-    'known X-M5 firmware prepares without changing a bank or recipe',
-    () async {
-      final fixture = Xm5Fixture(firmware: '1.20')
-        ..descriptorsUnavailable = true;
-      final camera = FujiCamera(fixture);
-      await camera.inspect();
-      await camera.validateAccess();
-      expect(fixture.selectedSlots, isEmpty);
-      expect(fixture.written, isEmpty);
-      expect(fixture.commands.where((code) => code == 0x1014).length, 1);
-    },
-  );
-  test(
-    'unverified firmware descriptor failure stops before slot selection',
+    'unverified X-M5 firmware validates model values without slot selection',
     () async {
       final fixture = Xm5Fixture(firmware: '9.99')
         ..descriptorsUnavailable = true;
       final camera = FujiCamera(fixture);
       await camera.inspect();
-      await expectLater(
-        camera.validateAccess(),
-        throwsA(
-          isA<PtpResponseException>().having(
-            (e) => e.property,
-            'property',
-            0xd18c,
-          ),
-        ),
-      );
+      await camera.validateAccess();
       expect(fixture.selectedSlots, isEmpty);
       expect(fixture.written, isEmpty);
     },
@@ -73,11 +63,9 @@ void main() {
       addTearDown(() async => tester.pumpWidget(const SizedBox()));
       final fixture = Xm5Fixture(
         model: scenario == 'xt5-readonly' ? 'X-T5' : 'X-M5',
-        firmware: scenario == 'xt5-readonly'
-            ? '4.31'
-            : scenario == 'descriptor'
-            ? '9.99'
-            : '1.20',
+        firmware: scenario == 'xt5-readonly' ? '4.31' : '9.99',
+        rejectDescriptor: scenario == 'descriptor' ? 0xd18c : null,
+        descriptorErrorCode: 0x200f,
       )..descriptorsUnavailable = true;
       if (scenario == 'xt5-readonly') {
         fixture.slots[fixture.selected]![0xd195] = u16(7);

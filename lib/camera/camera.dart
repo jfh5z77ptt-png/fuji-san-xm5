@@ -75,8 +75,8 @@ class FujiCamera implements RecipeCamera {
   CameraModel get profile => identity?.profile ?? CameraModel.x100vi;
   Set<int> operations = {};
   bool _knownSchemaOnly = false;
-  bool get xm5Firmware120 =>
-      identity?.model == 'X-M5' && identity?.firmware == '1.20';
+  bool _usedModelSchema = false;
+  bool get isXm5 => identity?.model == 'X-M5';
   bool get xt5Firmware431 =>
       identity?.model == 'X-T5' && identity?.firmware == '4.31';
   Future<Uint8List> read(int prop) => transport.command(0x1015, params: [prop]);
@@ -88,6 +88,7 @@ class FujiCamera implements RecipeCamera {
     identity = null;
     operations = {};
     _knownSchemaOnly = false;
+    _usedModelSchema = false;
     final r = Reader(await transport.command(0x1001));
     r.read16();
     r.read32();
@@ -120,7 +121,7 @@ class FujiCamera implements RecipeCamera {
     }
     operations = ops.toSet();
     if (requireRecipeProperties &&
-        (!ops.contains(0x1014) ||
+        ((!ops.contains(0x1014) && model.trim().toUpperCase() != 'X-M5') ||
             !ops.contains(0x1015) ||
             !ops.contains(0x1016) ||
             !props.contains(0xd18c) ||
@@ -191,7 +192,7 @@ class FujiCamera implements RecipeCamera {
     }
     DiagnosticLog.instance.add(
       'camera',
-      _knownSchemaOnly
+      _knownSchemaOnly || _usedModelSchema
           ? 'access validated with bounded model schema'
           : 'access validated with camera descriptors',
     );
@@ -254,8 +255,7 @@ class FujiCamera implements RecipeCamera {
   Future<void> select(int slot) async {
     _ready();
     profile.validateSlots([slot]);
-    // X-M5 1.20 selector 1..4 and restoration have been observed on hardware.
-    // Other firmware must still supply a writable selector descriptor.
+    // X-M5 uses C1..C4 with descriptor checks or its bounded model schema.
     if (profile.experimental) await _validateDescriptor(0xd18c, u16(slot));
     await set(0xd18c, u16(slot));
     await Future<void>.delayed(const Duration(milliseconds: 100));
@@ -264,12 +264,12 @@ class FujiCamera implements RecipeCamera {
     }
   }
 
-  // Explicit diagnostic for the observed X-M5 1.20 descriptor failure. This
-  // bypass applies only to candidate selector values, never recipe writes.
+  // Explicit X-M5 diagnostic, independent of the reported firmware version.
+  // This bypass applies only to candidate selector values, never recipe writes.
   Future<Map<String, dynamic>> probeXm5Slots() async {
     _ready();
-    if (identity!.model != 'X-M5' || identity!.firmware != '1.20') {
-      throw StateError('슬롯 전환 진단은 X-M5 펌웨어 1.20 전용입니다.');
+    if (!isXm5) {
+      throw StateError('슬롯 전환 진단은 X-M5 전용입니다.');
     }
     return _probeSlotSelection('xm5-slot-selection');
   }
@@ -395,17 +395,17 @@ class FujiCamera implements RecipeCamera {
     }
     final original = await read(0xd18c);
     final result = <Snapshot>[];
-    if (xm5Firmware120) _validateKnownValue(0xd18c, original);
+    if (isXm5) _validateKnownValue(0xd18c, original);
     Object? readFailure;
     try {
       for (final slot in slots.toList()..sort()) {
         await select(slot);
         final p = <int, Uint8List>{0xd18d: await read(0xd18d)};
-        if (xm5Firmware120) _validateKnownValue(0xd18d, p[0xd18d]!);
+        if (isXm5) _validateKnownValue(0xd18d, p[0xd18d]!);
         for (final s in settings) {
           p[s.id] = await read(s.id);
           if (p[s.id]!.length != 2) throw StateError('백업 속성 길이 오류');
-          if (xm5Firmware120) {
+          if (isXm5) {
             _validateKnownValue(
               s.id,
               s.id == 0xd195 && Reader(p[s.id]!).read16() == 6
@@ -440,6 +440,15 @@ class FujiCamera implements RecipeCamera {
       List.generate(a.length, (i) => a[i] == b[i]).every((v) => v);
 
   Future<void> _validateDescriptor(int id, Uint8List bytes) async {
+    // The firmware string is not a compatibility gate on X-M5. Unknown values
+    // still fail before mutation, and valid camera descriptors remain binding.
+    if (isXm5) {
+      _validateKnownValue(id, bytes);
+      if (!operations.contains(0x1014)) {
+        _usedModelSchema = true;
+        return;
+      }
+    }
     if (_knownSchemaOnly) {
       _validateKnownValue(id, bytes);
       return;
@@ -448,11 +457,20 @@ class FujiCamera implements RecipeCamera {
     try {
       descriptor = await transport.command(0x1014, params: [id]);
     } on PtpResponseException catch (e) {
-      // These exact firmware versions advertise 1014 but refuse descriptors.
-      // X-M5 1.20 selector writes and reads are observed; recipe writes remain
-      // experimental and use bounded schema checks plus backup/read-back.
-      if (((identity?.model == 'X100VI' && identity?.firmware == '1.32') ||
-              xm5Firmware120) &&
+      // On X-M5, fall back per property only when descriptor lookup is
+      // unavailable. Do not hide valid descriptors or later transport/errors.
+      if (isXm5 &&
+          e.operation == 0x1014 &&
+          (e.code == 0x2002 || e.code == 0x2005)) {
+        _usedModelSchema = true;
+        DiagnosticLog.instance.add(
+          'camera',
+          'X-M5 model schema property=0x${id.toRadixString(16)} response=0x${e.code.toRadixString(16)}',
+        );
+        return;
+      }
+      if (identity?.model == 'X100VI' &&
+          identity?.firmware == '1.32' &&
           e.operation == 0x1014 &&
           e.code == 0x2002) {
         _validateKnownValue(id, bytes);
@@ -533,21 +551,24 @@ class FujiCamera implements RecipeCamera {
         ? raw.getInt16(0, Endian.little)
         : raw.getUint16(0, Endian.little);
     if (!setting.accepts(value)) {
-      throw StateError('${profile.name} 설정 범위를 벗어났습니다: ${setting.label}');
+      throw StateError(
+        '${profile.name} ${identity!.firmware}: ${setting.label}의 원시값 $value '
+        '(0x${id.toRadixString(16)})을 지원하지 않습니다. 호환성 진단 결과를 확인하세요.',
+      );
     }
   }
 
   Future<void> _write(int slot, Map<int, Uint8List> p) async {
     _ready();
     profile.validateSlots([slot]);
-    if (xm5Firmware120) {
+    if (isXm5) {
       for (final e in p.entries) {
         _validateKnownValue(e.key, e.value);
       }
     }
     if (profile.experimental) await _validateDescriptor(0xd18c, u16(slot));
     final original = await read(0xd18c);
-    if (xm5Firmware120) _validateKnownValue(0xd18c, original);
+    if (isXm5) _validateKnownValue(0xd18c, original);
     Object? writeFailure;
     try {
       await select(slot);
