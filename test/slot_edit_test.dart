@@ -78,6 +78,35 @@ void main() {
     },
   );
 
+  testWidgets('grain-preserving editor shows a fixed grain row', (
+    tester,
+  ) async {
+    final fixture = CameraFixture();
+    fixture.slots[1]![0xd195] = u16(7);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: CameraSlotEditor(
+          snapshot: Snapshot(1, fixture.slots[1]!, normalizeGrainOff: false),
+          preserveGrain: true,
+          onSave: (_) async {},
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.scrollUntilVisible(
+      find.text('카메라 현재 값 유지 · 전송 및 복원에서 제외'),
+      200,
+    );
+    expect(
+      find.descendant(
+        of: find.byKey(const ValueKey(0xd195)),
+        matching: find.byType(DropdownButtonFormField<int>),
+      ),
+      findsNothing,
+    );
+    expect(tester.takeException(), isNull);
+  });
+
   for (final size in [const Size(390, 844), const Size(1440, 1000)]) {
     testWidgets(
       'editor displays current values and retains edits after failed save at $size',

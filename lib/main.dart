@@ -142,7 +142,7 @@ class _WorkspaceState extends State<Workspace> {
   String? connectionProblem;
   AppRelease? update;
   bool checkingUpdate = false;
-  String updateStatus = 'X-M5 펌웨어 제한 해제 수정판 · $appRelease';
+  String updateStatus = 'X-M5·X-T5 펌웨어 제한 해제 · X-T5 그레인 유지 · $appRelease';
   Timer? updateTimer;
   bool busy = true, loaded = false;
   String status = '라이브러리를 여는 중', query = '';
@@ -216,7 +216,7 @@ class _WorkspaceState extends State<Workspace> {
   Future<void> refreshSlots() async {
     cameraSlots = {};
     slotsReadAt = null;
-    report('카메라 $slotLabel 레시피를 읽는 중');
+    report(cameraReadOnly ? '카메라 현재 슬롯을 읽는 중' : '카메라 $slotLabel 레시피를 읽는 중');
     final snapshots = cameraReadOnly
         ? [await camera.readCurrentSlot()]
         : await camera.backup(camera.profile.slots);
@@ -337,6 +337,7 @@ class _WorkspaceState extends State<Workspace> {
         MaterialPageRoute(
           builder: (_) => CameraSlotEditor(
             snapshot: snapshot,
+            preserveGrain: camera.preservesGrain,
             onSave: (edit) async {
               try {
                 await verifyConnectedCamera();
@@ -435,7 +436,9 @@ class _WorkspaceState extends State<Workspace> {
     if (snapshot == null) return true;
     final values = snapshot.values;
     return snapshot.rawName != recipe.cameraName ||
-        recipe.writeValues.entries.any((e) => values[e.key] != e.value);
+        recipe.writeValues.entries.any(
+          (e) => camera.writesSetting(e.key) && values[e.key] != e.value,
+        );
   }
 
   int get pendingCount =>
@@ -601,12 +604,12 @@ class _WorkspaceState extends State<Workspace> {
         try {
           await camera.validateAccess();
         } on PtpResponseException catch (error) {
-          if (!camera.xt5Firmware431 ||
+          if (!camera.isXt5 ||
               error.operation != 0x1014 ||
               error.code != 0x2002) {
             rethrow;
           }
-          report('X-T5 4.31 · 현재 슬롯을 읽는 중 · 설정 쓰기 없음');
+          report('X-T5 · 현재 슬롯을 읽는 중 · 설정 쓰기 없음');
           final snapshot = await camera.readCurrentSlot();
           report('현재 슬롯 원본 백업 파일 저장 중');
           await store.backup(camera.identity!, [snapshot]);
@@ -615,7 +618,7 @@ class _WorkspaceState extends State<Workspace> {
           cameraReadOnly = true;
           watchConnection();
           report(
-            'X-T5 읽기 전용 연결 · 펌웨어 4.31 · C${snapshot.slot} 원본 저장 완료 · 전체 슬롯 백업·전송 미검증',
+            'X-T5 읽기 전용 연결 · 펌웨어 ${camera.identity!.firmware} · C${snapshot.slot} 원본 저장 완료 · 전체 슬롯 백업·전송 미검증',
           );
           return;
         }
@@ -628,7 +631,7 @@ class _WorkspaceState extends State<Workspace> {
         cameraReady = true;
         watchConnection();
         report(
-          '${camera.identity!.model} 준비 완료 · 펌웨어 ${camera.identity!.firmware} · 원본 자동 백업 완료',
+          '${camera.identity!.model} 준비 완료 · 펌웨어 ${camera.identity!.firmware} · 원본 자동 백업 완료${camera.preservesGrain ? ' · 그레인 유지' : ''}',
         );
       } catch (_) {
         try {
@@ -643,6 +646,7 @@ class _WorkspaceState extends State<Workspace> {
 
   Future<void> diagnoseCapabilities() async {
     await run(() async {
+      report('카메라 호환성 진단 · 기기 확인 중');
       final ownConnection = !transport.opened;
       try {
         if (ownConnection) {
@@ -681,13 +685,14 @@ class _WorkspaceState extends State<Workspace> {
 
   Future<void> diagnoseXt5SlotsPrepared() async {
     if (!await confirm(
-      'X-T5 4.31 슬롯 전환 진단',
+      'X-T5 슬롯 전환 진단',
       '현재 슬롯 원본을 먼저 저장합니다. 그 뒤 USB 슬롯 선택값 1~7을 차례로 보내고 설정을 읽은 다음 원래 선택값을 복원합니다. 레시피 이름이나 설정값은 쓰지 않습니다. 실제 다이얼 C 번호와의 대응과 레시피 전송은 별도 확인이 필요합니다.',
       confirmLabel: '진단 실행',
     )) {
       return;
     }
     await run(() async {
+      report('X-T5 슬롯 전환 진단 · 기기 확인 중');
       final ownConnection = !transport.opened;
       final expected = connectedIdentity;
       try {
@@ -698,10 +703,10 @@ class _WorkspaceState extends State<Workspace> {
           }
           await transport.open(devices.single['id'] as String);
         }
-        report('X-T5 4.31 진단 기기 확인 중');
+        report('X-T5 진단 기기 확인 중');
         await camera.inspect();
-        if (!camera.xt5Firmware431) {
-          throw StateError('X-T5 펌웨어 4.31 전용 진단입니다.');
+        if (!camera.isXt5) {
+          throw StateError('X-T5 전용 진단입니다.');
         }
         if (!ownConnection &&
             expected != null &&
@@ -761,6 +766,16 @@ class _WorkspaceState extends State<Workspace> {
   }
 
   Future<void> diagnoseXm5Slots() async {
+    connectionTimer?.cancel();
+    try {
+      await diagnoseXm5SlotsPrepared();
+    } finally {
+      if ((cameraReady || cameraReadOnly) && transport.opened)
+        watchConnection();
+    }
+  }
+
+  Future<void> diagnoseXm5SlotsPrepared() async {
     if (!await confirm(
       'X-M5 슬롯 전환 진단',
       'X-M5 전용 검사이며 펌웨어 버전으로 제한하지 않습니다. USB의 슬롯 선택값 1~4를 차례로 보내고 레시피를 읽은 뒤 원래 선택값으로 복원합니다. 레시피 설정값이나 이름을 쓰는 명령은 보내지 않습니다. 이 선택값이 실제 C1~C4와 같은지는 아직 확인되지 않았습니다.\n\n카메라 한 대만 연결하고, 검사 중 케이블을 분리하지 마세요. 오류가 나면 결과를 복사하고 카메라 상태를 확인하세요.',
@@ -769,6 +784,7 @@ class _WorkspaceState extends State<Workspace> {
       return;
     }
     await run(() async {
+      report('X-M5 슬롯 전환 진단 · 기기 확인 중');
       final ownConnection = !transport.opened;
       try {
         if (ownConnection) {
@@ -779,6 +795,7 @@ class _WorkspaceState extends State<Workspace> {
           await transport.open(devices.single['id'] as String);
         }
         await camera.inspect();
+        report('X-M5 슬롯 전환 진단 · 선택값 확인 및 복원 중');
         final result = await camera.probeXm5Slots();
         final restored = result['originalSelectorRestored'] == true;
         await copyJson(
@@ -980,7 +997,7 @@ class _WorkspaceState extends State<Workspace> {
     if (plan.isEmpty) return;
     if (!await confirm(
       '카메라 슬롯 덮어쓰기',
-      '${plan.entries.map((e) => 'C${e.key} → ${e.value.cameraName}').join('\n')}\n\n연결과 설정 호환성을 다시 확인하고, 선택한 슬롯의 현재 원본을 새로 백업한 뒤 전송합니다. 배치하지 않은 슬롯은 유지합니다.',
+      '${plan.entries.map((e) => 'C${e.key} → ${e.value.cameraName}').join('\n')}\n\n연결과 설정 호환성을 다시 확인하고, 선택한 슬롯의 현재 원본을 새로 백업한 뒤 전송합니다. 배치하지 않은 슬롯은 유지합니다.${camera.preservesGrain ? '\n\n그레인 효과는 각 슬롯의 현재 값을 유지합니다. 레시피의 그레인 강도·크기는 적용하지 않습니다.' : ''}',
     )) {
       return;
     }
@@ -1001,7 +1018,9 @@ class _WorkspaceState extends State<Workspace> {
           },
         );
         await refreshSlots();
-        report('${plan.length}개 슬롯 적용 및 읽기 검증 완료');
+        report(
+          '${plan.length}개 슬롯 적용 및 읽기 검증 완료${camera.preservesGrain ? ' · 그레인 유지' : ''}',
+        );
       } catch (e, stack) {
         cameraReady = false;
         connectionTimer?.cancel();
@@ -1080,7 +1099,7 @@ class _WorkspaceState extends State<Workspace> {
       if (!mounted ||
           !await confirm(
             '백업으로 복원',
-            '${snapshots.map((s) => 'C${s.slot}').join(', ')} 슬롯을 이 백업으로 덮어씁니다. 현재 값도 먼저 백업합니다.',
+            '${snapshots.map((s) => 'C${s.slot}').join(', ')} 슬롯을 이 백업으로 덮어씁니다. 현재 값도 먼저 백업합니다.${camera.preservesGrain ? '\n그레인 효과는 복원에서 제외하고 카메라 현재 값을 유지합니다.' : ''}',
           )) {
         return;
       }
@@ -1095,7 +1114,7 @@ class _WorkspaceState extends State<Workspace> {
         slotsReadAt = null;
         await camera.restore(s);
       }
-      report('백업 복원 및 검증 완료');
+      report('백업 복원 및 검증 완료${camera.preservesGrain ? ' · 그레인 유지' : ''}');
       await refreshSlots();
     });
   }
@@ -1263,20 +1282,22 @@ class _WorkspaceState extends State<Workspace> {
         subtitle: const Text('설정을 변경하지 않고 USB 속성 확인'),
         onTap: busy ? null : diagnoseCapabilities,
       ),
-      ListTile(
-        contentPadding: EdgeInsets.zero,
-        leading: const Icon(Icons.swap_horiz),
-        title: const Text('X-M5 슬롯 전환 진단'),
-        subtitle: const Text('펌웨어 제한 없음 · 선택값 변경 후 복원 · 레시피 쓰기 없음'),
-        onTap: busy ? null : diagnoseXm5Slots,
-      ),
-      ListTile(
-        contentPadding: EdgeInsets.zero,
-        leading: const Icon(Icons.fact_check_outlined),
-        title: const Text('X-T5 슬롯 전환 진단'),
-        subtitle: const Text('4.31 전용 · C1~C7 선택값 검사 후 복원'),
-        onTap: busy ? null : diagnoseXt5Slots,
-      ),
+      if (activeModel == CameraModel.xm5)
+        ListTile(
+          contentPadding: EdgeInsets.zero,
+          leading: const Icon(Icons.swap_horiz),
+          title: const Text('X-M5 슬롯 전환 진단'),
+          subtitle: const Text('펌웨어 제한 없음 · 선택값 변경 후 복원 · 레시피 쓰기 없음'),
+          onTap: busy ? null : diagnoseXm5Slots,
+        ),
+      if (activeModel == CameraModel.xt5)
+        ListTile(
+          contentPadding: EdgeInsets.zero,
+          leading: const Icon(Icons.fact_check_outlined),
+          title: const Text('X-T5 슬롯 전환 진단'),
+          subtitle: const Text('펌웨어 제한 없음 · C1~C7 선택값 검사 후 복원'),
+          onTap: busy ? null : diagnoseXt5Slots,
+        ),
       const Divider(height: 48),
       ListTile(
         contentPadding: EdgeInsets.zero,
@@ -1651,7 +1672,7 @@ class _WorkspaceState extends State<Workspace> {
           padding: const EdgeInsets.symmetric(vertical: 12),
           child: Text(
             activeModel == CameraModel.xt5
-                ? 'X-T5는 실기 연결·전송을 아직 확인하지 않았습니다. 4.31에서 설정 범위 조회가 거부되면 현재 슬롯을 읽기 전용으로 표시하고 원본을 저장합니다. C1–C7 전환은 별도 진단으로 확인합니다.'
+                ? 'X-T5 4.31의 USB 슬롯 전환·읽기·원래 선택값 복원은 사용자 진단으로 확인했습니다. 펌웨어 버전 제한 없이 기기 속성·설정값을 검사하며, 그레인은 유지하고 다른 항목을 전송합니다. 전체 레시피 전송·복원은 실기 검증이 필요하므로 한 슬롯부터 확인하세요.'
                 : 'X-M5 1.20의 USB 슬롯 조회와 색농도 저장은 사용자가 확인했습니다. 실제 C번호와 설정은 카메라에서 대조하세요. 전체 레시피 전송·복원은 실기 미검증입니다. 사진용 C1–C4와 필름 시뮬레이션 다이얼 C를 사용하세요.',
           ),
         ),
@@ -1669,6 +1690,11 @@ class _WorkspaceState extends State<Workspace> {
         const Padding(
           padding: EdgeInsets.only(top: 12),
           child: Text('카메라에 적용하려면 먼저 연결하세요. 연결하면 기기 확인과 원본 백업이 자동으로 진행됩니다.'),
+        ),
+      if (camera.preservesGrain)
+        const Padding(
+          padding: EdgeInsets.only(top: 12),
+          child: Text('그레인 유지 모드: 각 슬롯의 그레인 효과는 전송·복원에서 제외됩니다.'),
         ),
       if (cameraReadOnly) ...[
         const Text('읽기 전용 연결입니다. 현재 슬롯 원본만 저장되었으며, 레시피 전송은 비활성화되어 있습니다.'),
@@ -1894,7 +1920,7 @@ class _RecipeEditorState extends State<RecipeEditor> {
                         ),
                 ),
             const Text(
-              '카메라 상태에 따라 사용 가능한 값이 달라질 수 있습니다. 기종별 설정 범위와 카메라 응답을 확인합니다. X-M5는 펌웨어 버전 제한 없이 연결된 카메라의 속성과 설정값을 검사합니다. 속성 설명을 제공하지 않으면 앱의 X-M5 설정 범위를 확인하며, 제공되는 카메라 범위는 그대로 따릅니다. 원본 백업 저장 후 전송하고 다시 읽어 검증합니다. X100VI 1.32의 설명 조회 예외도 유지합니다. X-T5에는 이 예외 처리를 적용하지 않습니다. X-M5·X-T5 전송은 실험적 지원입니다.',
+              '카메라 상태에 따라 사용 가능한 값이 달라질 수 있습니다. 기종별 설정 범위와 카메라 응답을 확인합니다. X-M5는 펌웨어 버전 제한 없이 연결된 카메라의 속성과 설정값을 검사합니다. 속성 설명을 제공하지 않으면 앱의 X-M5 설정 범위를 확인하며, 제공되는 카메라 범위는 그대로 따릅니다. 원본 백업 저장 후 전송하고 다시 읽어 검증합니다. X100VI 1.32의 설명 조회 예외도 유지합니다. X-T5도 펌웨어 버전 제한 없이 그레인을 유지하며 나머지 항목을 같은 방식으로 검사·전송합니다. X-M5·X-T5 전송은 실험적 지원입니다.',
               style: TextStyle(fontSize: 12, color: Colors.black54),
             ),
           ],

@@ -10,8 +10,10 @@ class CameraSlotEditor extends StatefulWidget {
     super.key,
     required this.snapshot,
     required this.onSave,
+    this.preserveGrain = false,
   });
   final Snapshot snapshot;
+  final bool preserveGrain;
   final Future<void> Function(SlotEdit edit) onSave;
   @override
   State<CameraSlotEditor> createState() => _CameraSlotEditorState();
@@ -110,7 +112,15 @@ class _CameraSlotEditorState extends State<CameraSlotEditor> {
                           Padding(
                             key: ValueKey(s.id),
                             padding: const EdgeInsets.only(bottom: 20),
-                            child: s.id == 0xd19a && shiftGrid
+                            child: widget.preserveGrain && s.id == 0xd195
+                                ? const ListTile(
+                                    contentPadding: EdgeInsets.zero,
+                                    title: Text('그레인 효과'),
+                                    subtitle: Text(
+                                      '카메라 현재 값 유지 · 전송 및 복원에서 제외',
+                                    ),
+                                  )
+                                : s.id == 0xd19a && shiftGrid
                                 ? WbShiftGrid(
                                     red: values[0xd19a]!,
                                     blue: values[0xd19b]!,

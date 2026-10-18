@@ -26,6 +26,10 @@ void main() {
     );
     await tester.pumpWidget(FujiSanApp(store: MemoryStore()));
     await tester.pumpAndSettle();
+    await tester.tap(find.byType(DropdownButtonFormField<String>));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('X-M5 (실험적)').last);
+    await tester.pumpAndSettle();
     await tester.tap(find.text('X-M5 슬롯 전환 진단'));
     await tester.pumpAndSettle();
     expect(find.textContaining('USB의 슬롯 선택값 1~4'), findsOneWidget);
@@ -63,7 +67,9 @@ void main() {
       await tester.tap(find.text('X-T5 (실험적)').last);
       await tester.pumpAndSettle();
       expect(find.text('C7'), findsOneWidget);
-      expect(find.textContaining('X-T5는 실기 연결'), findsOneWidget);
+      expect(find.textContaining('X-T5 4.31의 USB 슬롯 전환'), findsOneWidget);
+      expect(find.text('X-M5 슬롯 전환 진단'), findsNothing);
+      expect(find.text('X-T5 슬롯 전환 진단'), findsOneWidget);
       await tester.scrollUntilVisible(
         find.text('1개 슬롯 일괄 적용'),
         200,

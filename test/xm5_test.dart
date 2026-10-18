@@ -205,24 +205,31 @@ void main() {
       expect(fixture.commands, isEmpty);
     },
   );
-  test('X-T5 never inherits another model descriptor exception', () async {
-    for (final firmware in ['1.20', '1.32', 'test']) {
-      final fixture = Xm5Fixture(model: 'X-T5', firmware: firmware)
-        ..descriptorsUnavailable = true;
-      final camera = FujiCamera(fixture);
-      await camera.inspect();
-      await expectLater(
-        camera.backup({7}),
-        throwsA(isA<PtpResponseException>()),
-      );
-      await expectLater(
-        camera.write(7, Recipe.fresh()),
-        throwsA(isA<PtpResponseException>()),
-      );
-      expect(fixture.selectedSlots, isEmpty);
-      expect(fixture.written, isEmpty);
-    }
-  });
+  test(
+    'X-T5 rejects other descriptor errors across firmware versions',
+    () async {
+      for (final firmware in ['1.20', '1.32', 'test']) {
+        final fixture = Xm5Fixture(
+          model: 'X-T5',
+          firmware: firmware,
+          rejectDescriptor: 0xd18c,
+          descriptorErrorCode: 0x200f,
+        );
+        final camera = FujiCamera(fixture);
+        await camera.inspect();
+        await expectLater(
+          camera.backup({7}),
+          throwsA(isA<PtpResponseException>()),
+        );
+        await expectLater(
+          camera.write(7, Recipe.fresh()),
+          throwsA(isA<PtpResponseException>()),
+        );
+        expect(fixture.selectedSlots, isEmpty);
+        expect(fixture.written, isEmpty);
+      }
+    },
+  );
   test(
     'X-T5 capability inspection remains read-only with missing properties',
     () async {
@@ -295,7 +302,7 @@ void main() {
     },
   );
 
-  for (final firmware in ['1.00', '1.20', '1.21', '9.99', 'unknown']) {
+  for (final firmware in ['1.00', '1.20', '1.21', '1.30', '9.99', 'unknown']) {
     test('X-M5 $firmware prepares, backs up, writes and restores', () async {
       final fixture = Xm5ObservedFixture(firmware: firmware);
       final camera = FujiCamera(fixture);

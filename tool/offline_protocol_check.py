@@ -78,7 +78,7 @@ Future<void> main() async {
     check(fixture.commands.isEmpty && camera.identity == null, 'No commands');
   });
   await run('X-M5 all firmware use bounded model fallback', () async {
-    for (final firmware in ['1.00', '1.20', '1.21', '9.99', 'unknown']) {
+    for (final firmware in ['1.00', '1.20', '1.21', '1.30', '9.99', 'unknown']) {
       final fixture = Xm5ObservedFixture(firmware: firmware);
       final camera = FujiCamera(fixture); await camera.inspect();
       await camera.validateAccess();
@@ -134,9 +134,9 @@ Future<void> main() async {
     await fails(() => camera.write(8, Recipe.fresh()), (e) => e is RangeError);
     check(fixture.commands.isEmpty, 'Invalid bank sends no command');
   });
-  await run('X-T5 descriptor failures never use another model fallback', () async {
+  await run('X-T5 unrelated descriptor errors stay blocked across firmware', () async {
     for (final fw in ['1.20', '1.32', 'test']) {
-      final fixture = Xm5Fixture(model: 'X-T5', firmware: fw)..descriptorsUnavailable = true;
+      final fixture = Xm5Fixture(model: 'X-T5', firmware: fw, rejectDescriptor: 0xd18c, descriptorErrorCode: 0x200f);
       final camera = FujiCamera(fixture); await camera.inspect();
       await fails(() => camera.backup({7}), (e) => e is PtpResponseException);
       await fails(() => camera.write(7, Recipe.fresh()), (e) => e is PtpResponseException);
@@ -282,27 +282,102 @@ Future<void> main() async {
     check(fixture.commands.every((c) => c == 0x1015), 'Only current-value reads');
     check(fixture.written.isEmpty && fixture.selectedSlots.isEmpty, 'No recipe or selector writes');
   });
-  await run('X-T5 4.31 explicit slot probe restores original without enabling recipe writes', () async {
+  await run('X-T5 4.31 explicit slot probe restores original with zero recipe writes', () async {
     final fixture = Xt5ObservedFixture(); final camera = FujiCamera(fixture);
     await camera.inspect(); final before = fixture.slots.toString();
     final result = await camera.probeXt5Slots();
     check(result['success'] == true && result['recipeWrites'] == false, 'Probe result');
     check(fixture.selectedSlots.join(',') == '1,2,3,4,5,6,7,1', 'Seven candidates then restore');
     check(fixture.slots.toString() == before && fixture.written.isEmpty, 'All banks unchanged');
-    await fails(() => camera.write(1, Recipe.fresh()), (e) => e is PtpResponseException);
-    check(fixture.written.isEmpty, 'Probe cannot unlock recipe writes');
+    check(result['distinctRecipeSignatures'] == 2, 'Observed C1 differs from C2-C7');
   });
-  await run('X-T5 4.31 failed or ignored selection restores and other firmware is blocked', () async {
+  await run('X-T5 failed or ignored selection restores the original selector', () async {
     for (final fixture in [Xt5ObservedFixture(ignoreCandidate: 2), Xt5ObservedFixture(failReadAt: 3)]) {
       final camera = FujiCamera(fixture); await camera.inspect();
       final result = await camera.probeXt5Slots();
       check(result['success'] == false && result['originalSelectorRestored'] == true, 'Restoration on failure');
       check(fixture.written.isEmpty && fixture.selected == 1, 'No recipe mutation');
     }
-    final fixture = Xt5ObservedFixture(firmware: '4.32'); final camera = FujiCamera(fixture);
-    await camera.inspect(); fixture.commands.clear();
-    await fails(() => camera.probeXt5Slots(), (e) => e is StateError);
-    check(fixture.commands.isEmpty, 'No traffic on unverified firmware');
+  });
+  await run('X-T5 4.31 batch apply and restore preserve grain 7 and other slots', () async {
+    final fixture = Xt5ObservedFixture(); final camera = FujiCamera(fixture);
+    await camera.inspect(); await camera.validateAccess();
+    check(fixture.selectedSlots.isEmpty && fixture.written.isEmpty, 'No preparation writes');
+    final backups = await camera.backup(camera.profile.slots);
+    check(backups.map((s) => s.values[0xd195]).join(',') == '7,6,6,6,6,6,6', 'Raw grain values preserved');
+    final other = fixture.slots[2].toString(); var saved = false;
+    final recipe = Recipe(id: 'xt5-test', name: 'Test', cameraName: 'Test', values: {...Recipe.fresh().values, 0xd195: 5, 0xd19f: 30});
+    await camera.validatePlan({1: recipe});
+    await BatchWriter(camera).apply({1: recipe}, (snapshots) async {
+      check(fixture.written.isEmpty && snapshots.single.values[0xd195] == 7, 'Raw backup before write'); saved = true;
+    }, (_) {});
+    check(saved && fixture.slots[1]![0xd19f].toString() == u16(30).toString(), 'Recipe writes performed');
+    check(fixture.slots[1]![0xd195].toString() == u16(7).toString(), 'Original grain retained');
+    fixture.slots[1]![0xd195] = u16(8); await camera.restore(backups.first);
+    check(fixture.slots[1]![0xd195].toString() == u16(8).toString(), 'Restore also preserves current grain');
+    for (final entry in backups.first.properties.entries) {
+      if (entry.key != 0xd195) check(fixture.slots[1]![entry.key].toString() == entry.value.toString(), 'Restored field');
+    }
+    check(fixture.slots[2].toString() == other && fixture.selected == 1 && !fixture.written.contains(0xd195), 'Only intended bank and fields');
+  });
+  await run('X-T5 partial edit and direct setter cannot write grain', () async {
+    final fixture = Xt5ObservedFixture(); final camera = FujiCamera(fixture); await camera.inspect();
+    final original = await camera.readCurrentSlot(); fixture.commands.clear();
+    await fails(() => camera.set(0xd195, u16(1)), (e) => e is StateError);
+    await camera.editSlot(original, SlotEdit(original.rawName, {...original.values, 0xd195: 5}), (_) async { throw StateError('Should not persist'); });
+    check(fixture.commands.isEmpty, 'Grain-only edit no-op');
+    await camera.editSlot(original, SlotEdit(original.rawName, {...original.values, 0xd195: 5, 0xd19f: 10}), (_) async {});
+    check(fixture.written.join(',') == '${0xd19f}' && fixture.slots[1]![0xd195].toString() == u16(7).toString(), 'Only color edited');
+  });
+  await run('X-T5 failed persistence blocks every recipe write', () async {
+    final fixture = Xt5ObservedFixture(); final camera = FujiCamera(fixture); await camera.inspect();
+    await fails(() => BatchWriter(camera).apply({2: Recipe.fresh()}, (_) async { throw StateError('disk full'); }, (_) {}), (e) => e is BatchApplyFailure && !e.writeAttempted);
+    check(fixture.written.isEmpty && fixture.selected == 1, 'No recipe writes and restored selector');
+  });
+  await run('X-T5 read-back, refused write and grain side effect are reported', () async {
+    for (final failure in ['readback', 'refused', 'grain-side-effect']) {
+      final fixture = Xt5ObservedFixture(changeGrainOnColor: failure == 'grain-side-effect');
+      if (failure == 'readback') fixture.corrupt = true;
+      if (failure == 'refused') {
+        fixture.rejecting.add(0xd19f);
+        fixture.slots[2]![0xd19f] = u16(20);
+      }
+      final camera = FujiCamera(fixture); await camera.inspect();
+      await fails(() => camera.write(2, Recipe.fresh()), (e) => e is StateError);
+      check(!fixture.written.contains(0xd195) && fixture.selected == 1, 'No grain write and selector restored');
+    }
+  });
+  await run('X-T5 4.31 keeps valid descriptor restrictions and other errors', () async {
+    for (final fixture in [
+      Xm5Fixture(model: 'X-T5', firmware: '4.31', rejectDescriptor: 0xd18c, descriptorErrorCode: 0x200f),
+      Xm5Fixture(model: 'X-T5', firmware: '4.31', rejectDescriptor: 0xd18c, readOnlyProperty: 0xd1a2),
+    ]) {
+      final camera = FujiCamera(fixture); await camera.inspect();
+      await fails(() => camera.validateAccess(), (e) => e is StateError);
+      check(fixture.selectedSlots.isEmpty && fixture.written.isEmpty, 'Restricted before mutation');
+    }
+  });
+  await run('X-T5 firmware strings never gate preparation write restore or selector probe', () async {
+    for (final firmware in ['1.00', '4.30', '4.31', '4.32', '9.99', 'unknown']) {
+      final fixture = Xt5ObservedFixture(firmware: firmware); final camera = FujiCamera(fixture);
+      await camera.inspect(); await camera.validateAccess();
+      check(fixture.selectedSlots.isEmpty && fixture.written.isEmpty, 'Preparation only reads');
+      final backups = await camera.backup({1, 7});
+      await camera.validatePlan({7: Recipe.fresh()}); await camera.write(7, Recipe.fresh()); await camera.restore(backups.last);
+      check(!fixture.written.contains(0xd195) && fixture.selected == 1, 'Grain and selector');
+      check((await camera.backup({7})).single.toJson().toString() == backups.last.toJson().toString(), 'Restored target');
+      check((await camera.backup({1})).single.toJson().toString() == backups.first.toJson().toString(), 'Other bank');
+      fixture.written.clear(); final report = await camera.probeXt5Slots();
+      check(report['success'] == true && fixture.written.isEmpty, 'Probe across firmware');
+    }
+  });
+  await run('X-T5 missing descriptor operation still validates model values', () async {
+    final fixture = Xm5Fixture(model: 'X-T5', firmware: 'unknown', descriptorOperation: false);
+    fixture.slots[4]![0xd195] = u16(7);
+    final camera = FujiCamera(fixture); await camera.inspect(); await camera.validateAccess();
+    final snapshot = (await camera.backup({4})).single; await camera.write(4, Recipe.fresh()); await camera.restore(snapshot);
+    check(!fixture.commands.contains(0x1014) && !fixture.written.contains(0xd195), 'No descriptor command or grain setter');
+    check(fixture.slots[4]![0xd195].toString() == u16(7).toString(), 'Raw grain intact');
   });
   print('$passed offline protocol checks passed (simulated transport, no hardware).');
 }

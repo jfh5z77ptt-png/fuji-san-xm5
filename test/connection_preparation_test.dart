@@ -54,7 +54,12 @@ void main() {
     },
   );
 
-  for (final scenario in ['ready', 'descriptor', 'disk', 'xt5-readonly']) {
+  for (final scenario in [
+    'ready',
+    'descriptor',
+    'disk',
+    'xt5-grain-preserved',
+  ]) {
     testWidgets('automatic preparation: $scenario', (tester) async {
       tester.view.physicalSize = const Size(1440, 1200);
       tester.view.devicePixelRatio = 1;
@@ -62,16 +67,16 @@ void main() {
       addTearDown(tester.view.resetDevicePixelRatio);
       addTearDown(() async => tester.pumpWidget(const SizedBox()));
       final fixture = Xm5Fixture(
-        model: scenario == 'xt5-readonly' ? 'X-T5' : 'X-M5',
-        firmware: scenario == 'xt5-readonly' ? '4.31' : '9.99',
+        model: scenario == 'xt5-grain-preserved' ? 'X-T5' : 'X-M5',
+        firmware: '9.99',
         rejectDescriptor: scenario == 'descriptor' ? 0xd18c : null,
         descriptorErrorCode: 0x200f,
       )..descriptorsUnavailable = true;
-      if (scenario == 'xt5-readonly') {
+      if (scenario == 'xt5-grain-preserved') {
         fixture.slots[fixture.selected]![0xd195] = u16(7);
       }
       final store = PreparationStore()..failBackup = scenario == 'disk';
-      if (scenario == 'xt5-readonly') {
+      if (scenario == 'xt5-grain-preserved') {
         final recipe = Recipe.fresh();
         await store.save([recipe], {4: recipe.id});
       }
@@ -124,25 +129,13 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.text('연결할 카메라'), findsNothing);
       expect(fixture.written, isEmpty);
-      if (scenario == 'xt5-readonly') {
+      if (scenario == 'xt5-grain-preserved') {
         expect(store.backupsSaved, 1);
-        expect(find.text('X-T5 읽기 전용'), findsOneWidget);
-        expect(fixture.selectedSlots, isEmpty);
+        expect(find.text('X-T5 준비 완료'), findsOneWidget);
+        expect(find.text('X-M5 슬롯 전환 진단'), findsNothing);
+        expect(find.text('X-T5 슬롯 전환 진단'), findsOneWidget);
+        expect(fixture.selected, 4);
         expect(fixture.written, isEmpty);
-        await tester.scrollUntilVisible(
-          find.text('Original 4'),
-          150,
-          scrollable: find.descendant(
-            of: find.byKey(const ValueKey('camera-kit')),
-            matching: find.byType(Scrollable),
-          ),
-        );
-        await tester.tap(find.text('Original 4'));
-        await tester.pumpAndSettle();
-        expect(find.textContaining('미확인 원시값 7'), findsOneWidget);
-        expect(find.text('카메라에 저장'), findsNothing);
-        await tester.tap(find.text('닫기'));
-        await tester.pumpAndSettle();
         await tester.scrollUntilVisible(
           find.text('1개 슬롯 일괄 적용'),
           150,
@@ -153,11 +146,17 @@ void main() {
         );
         await tester.tap(find.text('1개 슬롯 일괄 적용'));
         await tester.pumpAndSettle();
-        expect(find.text('X-T5 전송 검증이 필요합니다'), findsOneWidget);
-        expect(fixture.selectedSlots, isEmpty);
+        expect(find.text('카메라 슬롯 덮어쓰기'), findsOneWidget);
+        expect(find.textContaining('그레인 강도·크기는 적용하지 않습니다'), findsOneWidget);
         expect(fixture.written, isEmpty);
-        await tester.tap(find.text('취소'));
+        await tester.tap(find.text('적용').last);
         await tester.pumpAndSettle();
+        expect(fixture.written, isNotEmpty);
+        expect(fixture.written, isNot(contains(0xd195)));
+        expect(fixture.slots[4]![0xd195], u16(7));
+        expect(find.text('배치한 레시피가 모두 적용됨'), findsOneWidget);
+        expect(store.backupsSaved, 2);
+        expect(fixture.selected, 4);
       } else if (scenario == 'ready') {
         expect(store.backupsSaved, 1);
         expect(find.text('X-M5 준비 완료'), findsOneWidget);

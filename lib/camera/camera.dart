@@ -77,10 +77,15 @@ class FujiCamera implements RecipeCamera {
   bool _knownSchemaOnly = false;
   bool _usedModelSchema = false;
   bool get isXm5 => identity?.model == 'X-M5';
-  bool get xt5Firmware431 =>
-      identity?.model == 'X-T5' && identity?.firmware == '4.31';
+  bool get isXt5 => identity?.model == 'X-T5';
+  bool get preservesGrain => isXt5;
+  bool get _boundedModel => isXm5 || isXt5;
+  bool writesSetting(int id) => !(preservesGrain && id == 0xd195);
   Future<Uint8List> read(int prop) => transport.command(0x1015, params: [prop]);
   Future<void> set(int prop, Uint8List value) async {
+    if (!writesSetting(prop)) {
+      throw StateError('X-T5의 그레인 효과는 카메라 현재 값을 유지합니다.');
+    }
     await transport.command(0x1016, params: [prop], outgoing: value);
   }
 
@@ -121,7 +126,8 @@ class FujiCamera implements RecipeCamera {
     }
     operations = ops.toSet();
     if (requireRecipeProperties &&
-        ((!ops.contains(0x1014) && model.trim().toUpperCase() != 'X-M5') ||
+        ((!ops.contains(0x1014) &&
+                !['X-M5', 'X-T5'].contains(model.trim().toUpperCase())) ||
             !ops.contains(0x1015) ||
             !ops.contains(0x1016) ||
             !props.contains(0xd18c) ||
@@ -184,6 +190,7 @@ class FujiCamera implements RecipeCamera {
       if (bytes.length != 2) {
         throw FormatException('${s.label} 조회값 길이가 올바르지 않습니다.');
       }
+      if (!writesSetting(s.id)) continue;
       // Grain Off has separate read and write representations.
       final value = s.id == 0xd195 && Reader(bytes).read16() == 6
           ? u16(1)
@@ -205,6 +212,7 @@ class FujiCamera implements RecipeCamera {
     for (final entry in plan.entries) {
       await _validateDescriptor(0xd18c, u16(entry.key));
       for (final value in entry.value.writeValues.entries) {
+        if (!writesSetting(value.key)) continue;
         await _validateDescriptor(value.key, u16(value.value));
       }
       await _validateDescriptor(0xd18d, ptpString(entry.value.cameraName));
@@ -276,8 +284,8 @@ class FujiCamera implements RecipeCamera {
 
   Future<Map<String, dynamic>> probeXt5Slots() async {
     _ready();
-    if (!xt5Firmware431) {
-      throw StateError('슬롯 전환 진단은 X-T5 펌웨어 4.31 전용입니다.');
+    if (!isXt5) {
+      throw StateError('슬롯 전환 진단은 X-T5 전용입니다.');
     }
     return _probeSlotSelection('xt5-slot-selection');
   }
@@ -395,17 +403,17 @@ class FujiCamera implements RecipeCamera {
     }
     final original = await read(0xd18c);
     final result = <Snapshot>[];
-    if (isXm5) _validateKnownValue(0xd18c, original);
+    if (_boundedModel) _validateKnownValue(0xd18c, original);
     Object? readFailure;
     try {
       for (final slot in slots.toList()..sort()) {
         await select(slot);
         final p = <int, Uint8List>{0xd18d: await read(0xd18d)};
-        if (isXm5) _validateKnownValue(0xd18d, p[0xd18d]!);
+        if (_boundedModel) _validateKnownValue(0xd18d, p[0xd18d]!);
         for (final s in settings) {
           p[s.id] = await read(s.id);
           if (p[s.id]!.length != 2) throw StateError('백업 속성 길이 오류');
-          if (isXm5) {
+          if (_boundedModel && writesSetting(s.id)) {
             _validateKnownValue(
               s.id,
               s.id == 0xd195 && Reader(p[s.id]!).read16() == 6
@@ -414,7 +422,7 @@ class FujiCamera implements RecipeCamera {
             );
           }
         }
-        result.add(Snapshot(slot, p));
+        result.add(Snapshot(slot, p, normalizeGrainOff: !preservesGrain));
       }
     } catch (error) {
       readFailure = error;
@@ -440,9 +448,9 @@ class FujiCamera implements RecipeCamera {
       List.generate(a.length, (i) => a[i] == b[i]).every((v) => v);
 
   Future<void> _validateDescriptor(int id, Uint8List bytes) async {
-    // The firmware string is not a compatibility gate on X-M5. Unknown values
-    // still fail before mutation, and valid camera descriptors remain binding.
-    if (isXm5) {
+    // X-M5 and X-T5 use model schemas without firmware gates; X-T5 keeps grain.
+    // Valid descriptors remain binding for every property we actually write.
+    if (_boundedModel) {
       _validateKnownValue(id, bytes);
       if (!operations.contains(0x1014)) {
         _usedModelSchema = true;
@@ -457,15 +465,15 @@ class FujiCamera implements RecipeCamera {
     try {
       descriptor = await transport.command(0x1014, params: [id]);
     } on PtpResponseException catch (e) {
-      // On X-M5, fall back per property only when descriptor lookup is
+      // On bounded models, fall back per property only when lookup is
       // unavailable. Do not hide valid descriptors or later transport/errors.
-      if (isXm5 &&
+      if (_boundedModel &&
           e.operation == 0x1014 &&
           (e.code == 0x2002 || e.code == 0x2005)) {
         _usedModelSchema = true;
         DiagnosticLog.instance.add(
           'camera',
-          'X-M5 model schema property=0x${id.toRadixString(16)} response=0x${e.code.toRadixString(16)}',
+          '${profile.name} model schema property=0x${id.toRadixString(16)} response=0x${e.code.toRadixString(16)} grainPreserved=$preservesGrain',
         );
         return;
       }
@@ -561,17 +569,26 @@ class FujiCamera implements RecipeCamera {
   Future<void> _write(int slot, Map<int, Uint8List> p) async {
     _ready();
     profile.validateSlots([slot]);
-    if (isXm5) {
+    p = {
+      for (final e in p.entries)
+        if (writesSetting(e.key)) e.key: e.value,
+    };
+    if (p.isEmpty) return;
+    if (_boundedModel) {
       for (final e in p.entries) {
         _validateKnownValue(e.key, e.value);
       }
     }
     if (profile.experimental) await _validateDescriptor(0xd18c, u16(slot));
     final original = await read(0xd18c);
-    if (isXm5) _validateKnownValue(0xd18c, original);
+    if (_boundedModel) _validateKnownValue(0xd18c, original);
     Object? writeFailure;
     try {
       await select(slot);
+      final grain = preservesGrain ? await read(0xd195) : null;
+      if (grain != null && grain.length != 2) {
+        throw const FormatException('그레인 효과 조회값 길이 오류');
+      }
       // Check every value before the first recipe write. A late unsupported
       // setting must not leave earlier fields partially changed.
       for (final e in p.entries) {
@@ -601,6 +618,9 @@ class FujiCamera implements RecipeCamera {
             'C$slot 속성 0x${e.key.toRadixString(16)} 읽기 검증 실패. 백업에서 복원하세요.',
           );
         }
+      }
+      if (grain != null && !_same(grain, await read(0xd195))) {
+        throw StateError('C$slot 그레인 값이 전송 전과 다릅니다. 카메라에서 확인하세요.');
       }
     } catch (error) {
       writeFailure = error;
@@ -679,7 +699,8 @@ class FujiCamera implements RecipeCamera {
     SlotEdit edit,
     Future<void> Function(List<Snapshot>) persist,
   ) async {
-    final changes = edit.changes(original);
+    final changes = edit.changes(original)
+      ..removeWhere((id, _) => !writesSetting(id));
     if (changes.isEmpty) return;
     final current = (await backup({original.slot})).single;
     if (original.properties.entries.any(

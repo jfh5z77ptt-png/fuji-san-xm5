@@ -7,7 +7,7 @@ import 'package:flutter/services.dart';
 
 import 'storage.dart';
 
-const appRelease = '0.3.0-alpha.4';
+const appRelease = '0.3.0-alpha.6';
 const releasesUrl = 'https://github.com/reikop/fuji-san/releases';
 
 class ReleaseVersion implements Comparable<ReleaseVersion> {
